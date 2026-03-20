@@ -1,0 +1,2171 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>CHPT Workflow / Tracker</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body,#root{background:#060c14;min-height:100vh;height:100%}
+body{color:#e2eaf4;font-family:'DM Sans',sans-serif;font-size:14px;line-height:1.5}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:#060c14}
+::-webkit-scrollbar-thumb{background:#1a2d44;border-radius:3px}
+input,select,textarea{background:#0d1825;color:#e2eaf4;border:1px solid #1a2d44;border-radius:6px;padding:7px 10px;font-family:'DM Sans',sans-serif;font-size:13px;outline:none;width:100%}
+input:focus,select:focus,textarea:focus{border-color:#2a8fff;box-shadow:0 0 0 2px #2a8fff22}
+select option{background:#0d1825}
+button{cursor:pointer;font-family:'DM Sans',sans-serif;font-size:13px;border:none;border-radius:6px;padding:7px 14px;transition:all .15s}
+label{font-size:12px;color:#7a9ab8;font-weight:500;display:block;margin-bottom:4px}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const SUPABASE_URL = 'https://nfhbqwzdjnslaahqgeza.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5maGJxd3pkam5zbGFhaHFnZXphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5NjczOTcsImV4cCI6MjA4OTU0MzM5N30.4TlyrYeHowM8tlfaki4tCtRgSumWk0dDVcAI-lcSLmA';
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_KEY);
+</script>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback, useMemo, useRef } = React;
+
+// ─── Theme & Globals ──────────────────────────────────────────────────────────
+const T = {
+bg: “#060c14”, bgCard: “#0d1825”, bgHover: “#111f30”,
+blue: “#2a8fff”, blueHover: “#4fa3ff”, blueDim: “#1a5fa0”,
+green: “#22c55e”, yellow: “#f59e0b”, red: “#ef4444”, orange: “#f97316”,
+text: “#e2eaf4”, textMuted: “#7a9ab8”, textDim: “#4a6a88”,
+border: “#1a2d44”, borderBright: “#2a4060”,
+font: “‘DM Sans’, sans-serif”,
+};
+
+const globalCSS = `@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap'); *{box-sizing:border-box;margin:0;padding:0} html,body,#root{background:${T.bg};min-height:100vh;height:100%} body{background:${T.bg};color:${T.text};font-family:${T.font};font-size:14px;line-height:1.5} ::-webkit-scrollbar{width:6px;height:6px} ::-webkit-scrollbar-track{background:${T.bg}} ::-webkit-scrollbar-thumb{background:${T.border};border-radius:3px} ::-webkit-scrollbar-thumb:hover{background:${T.borderBright}} input,select,textarea{background:${T.bgCard};color:${T.text};border:1px solid ${T.border};border-radius:6px;padding:7px 10px;font-family:${T.font};font-size:13px;outline:none;width:100%} input:focus,select:focus,textarea:focus{border-color:${T.blue};box-shadow:0 0 0 2px ${T.blue}22} select option{background:${T.bgCard}} button{cursor:pointer;font-family:${T.font};font-size:13px;border:none;border-radius:6px;padding:7px 14px;transition:all .15s} label{font-size:12px;color:${T.textMuted};font-weight:500;display:block;margin-bottom:4px}`;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const uid = () => Math.random().toString(36).slice(2, 9);
+const today = () => new Date().toISOString().slice(0, 10);
+const fmt = d => d ? new Date(d + “T12:00:00”).toLocaleDateString(“en-US”, { month: “short”, day: “numeric”, year: “numeric” }) : “—”;
+const daysBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
+const addDays = (d, n) => { const dt = new Date(d + “T12:00:00”); dt.setDate(dt.getDate() + n); return dt.toISOString().slice(0, 10); };
+
+function useLS(key, init) {
+const [val, setVal] = useState(() => {
+try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : init; }
+catch { return init; }
+});
+const set = useCallback(v => {
+setVal(prev => {
+const next = typeof v === “function” ? v(prev) : v;
+try { localStorage.setItem(key, JSON.stringify(next)); } catch {}
+return next;
+});
+}, [key]);
+return [val, set];
+}
+// ─── Data Constants ───────────────────────────────────────────────────────────
+const CASE_TYPES = [“Standard”, “Workers Comp”, “No Fault”, “Medicare”, “Medicaid”];
+const VISIT_TYPES = [“Initial Eval”, “Follow-Up”, “Re-Eval”, “Discharge”];
+const ATTENDANCE = [“Scheduled”, “Attended”, “No-Show”, “Cancelled”, “Closed”];
+const ICD10_LIST = [
+“M54.5 – Low Back Pain”, “M54.2 – Cervicalgia”, “M25.511 – Shoulder Pain R”,
+“M25.512 – Shoulder Pain L”, “M79.3 – Panniculitis”, “S83.6 – Sprain of Knee”,
+“M17.11 – Primary Osteoarthritis R Knee”, “M47.816 – Spondylosis Lumbar”,
+“M54.12 – Radiculopathy Cervical”, “M54.4 – Lumbago with Sciatica”,
+“S46.011 – Rotator Cuff Tear R”, “G54.2 – Cervical Root Disorder”, “Custom”
+];
+const CPT_CODES = [
+“97010”,“97012”,“97014”,“97016”,“97018”,“97022”,“97026”,“97028”,“97032”,“97033”,
+“97035”,“97110”,“97112”,“97116”,“97120”,“97124”,“97129”,“97130”,“97140”,“97150”,
+“97161”,“97162”,“97163”,“97164”,“97165”,“97166”,“97167”,“97168”,“97530”,“97535”,
+“97542”,“97545”,“97546”,“97597”,“97598”,“97602”,“97750”,“97755”,“97760”,“97762”,
+“97763”,“G0283”,“G0129”
+];
+const PATIENT_GOALS = [
+“Reduce pain to ≤ 3/10”, “Independent HEP”, “Full ROM”, “Return to work”,
+“Return to sport”, “Independent ADLs”, “Improve balance”, “Improve strength”,
+“Reduce swelling”, “Normalize gait”, “Custom goal…”
+];
+const INSUR_CHECK = {
+“Basic”: [“Eligibility verified”,“Group #”,“Member ID”,“Effective date”,“Termination date”,“Plan type”],
+“Authorization”: [“Auth required?”,“Auth number obtained”,“Auth start date”,“Auth end date”,“Visits approved”,“Referral on file”],
+“Financial”: [“Deductible met?”,“Co-pay amount”,“OOP max”,“OOP remaining”,“Visits allowed/year”,“Visits used”]
+};
+
+// ─── SOAP Templates ───────────────────────────────────────────────────────────
+const SOAP_TEMPLATES = {
+“Low Back Pain”: {
+“Initial Eval”: `S: Pt presents with [duration] hx of LBP, rated [#]/10 at worst. Aggravated by [activities]. Relieved by [rest/ice/heat]. PMHx: [relevant hx]. Prior PT: [yes/no]. O: Posture: [findings]. ROM: Flexion [°], Extension [°], SB R/L [°]. Strength: [grade/5 bilat]. Special Tests: SLR [pos/neg], FABER [pos/neg]. Palpation: tenderness at [levels]. Gait: [WNL/antalgic]. A: Pt presents with [acute/subacute/chronic] LBP consistent with dx of [ICD-10]. Functional limitations include [ADLs/work/sport]. Rehab potential is [good/fair/poor] based on [factors]. P: Skilled PT 2-3x/wk x [#] wks. STG (2 wks): [goal]. LTG (4-6 wks): [goal]. Plan: therapeutic exercise, manual therapy, modalities as indicated, HEP instruction.`,
+“Follow-Up”: `S: Pt reports pain [#]/10 today. [Better/worse/same] since last visit. Compliance with HEP: [good/fair/poor]. [Any new complaints]. O: ROM: Flexion [°], Extension [°]. Strength: [unchanged/improved]. Functional: [sit-stand, walking tolerance]. Response to tx: [tolerated well/with modifications]. A: Pt is [progressing/plateaued/declining] toward STG/LTG. [Specify functional gains]. [Any barriers to progress]. P: Continue POC. Advance [exercise/activity] as tolerated. Reassess in [#] visits. [Any modifications].`,
+“Re-Eval”: `S: Pt seen for re-evaluation. Current pain level [#]/10. Progress since initial eval: [describe gains]. Current functional limitations: [list]. O: ROM: Flexion [°] (was [°]), Extension [°] (was [°]). Strength: [grade] (was [grade]). Functional scores: [outcome measure if applicable]. A: Pt has met [#] of [#] STGs. LTGs [on track/need revision]. Continued skilled PT warranted for [reason]. P: Updated STG: [new goals]. Updated LTG: [goals]. Continue [#]x/wk x [#] wks. Authorization requested for continued care.`,
+“Discharge”: `S: Pt presents for discharge visit. Pain [#]/10 (initial: [#]/10). Goals met: [list]. Pt reports [functional status]. O: ROM: Flexion [°], Extension [°] – [WNL/improved]. Strength: [grade] bilat. Functional testing: [results]. HEP compliance: [good/fair/poor]. A: Pt has [met/substantially met] stated goals. Functional independence achieved in [areas]. [Any residual deficits]. P: Discharge to HEP. RTC PRN. Follow-up with MD/DO in [timeframe]. Patient educated on: activity modification, body mechanics, signs of recurrence.`
+},
+“Cervicalgia”: {
+“Initial Eval”: `S: Pt presents with [duration] hx of neck pain, rated [#]/10. Radiation to [area/none]. Headaches: [yes/no, frequency]. Mechanism: [insidious/MVA/trauma]. ADL limitations: [list]. O: ROM: Flexion [°], Extension [°], Rot R/L [°], SB R/L [°]. Strength: Flexors/Extensors [grade/5]. Neuro screen: UE sensation [intact/deficits], reflexes [WNL/diminished]. Special tests: Spurling's [pos/neg], Distraction [pos/neg]. A: Pt presents with [acute/chronic] cervicalgia. [Cervicogenic headache component: yes/no]. Functional limitations: [driving/computer work/sleep]. P: PT 2-3x/wk x [#] wks. STG: [goal]. LTG: [goal]. Plan: cervical mobilization/manipulation, deep cervical flexor training, postural re-ed, modalities.`,
+“Follow-Up”: `S: Neck pain today [#]/10. [Better/same/worse]. Headaches [frequency]. HEP compliance [good/fair/poor]. [New complaints]. O: ROM: Flex [°], Ext [°], Rot R/L [°]. Posture: [improved/unchanged]. Response to tx: tolerated [well/with modifications]. A: [Progressing/plateaued]. [Describe specific gains in function]. P: Continue POC. [Modifications]. Reassess in [#] visits.`,
+“Re-Eval”: `S: Re-evaluation for cervicalgia. Current pain [#]/10. Progress: [describe]. Ongoing limitations: [list]. O: ROM now: Flex [°] (was [°]), Ext [°] (was [°]), Rot R/L [°] (was [°]). Postural improvements: [noted/not noted]. A: [#] of [#] STGs met. Skilled PT still warranted for [reason]. P: Revised goals: [list]. Continue [#]x/wk. Auth requested.`,
+“Discharge”: `S: Discharge visit. Pain [#]/10 (initial [#]/10). Goals achieved: [list]. O: ROM: WNL/improved. Strength: [grade]. Posture: [improved]. HEP: independent. A: Goals met. Functional independence in [ADLs/work tasks] achieved. P: HEP independence. RTC PRN. MD follow-up [timeframe].`
+},
+“Shoulder Pain”: {
+“Initial Eval”: `S: Pt presents with [R/L] shoulder pain x [duration], rated [#]/10. Mechanism: [rotator cuff/impingement/post-surgical]. Overhead activities: [limited/unable]. Sleep: [affected/unaffected]. Prior treatment: [none/injection/surgery]. O: Posture: [forward head, rounded shoulders]. ROM: Flex [°], Abd [°], ER/IR [°]. MMT: Supraspinatus [/5], Infraspinatus [/5], Subscapularis [/5], Deltoid [/5]. Special tests: Empty can [+/-], Neer [+/-], Hawkins [+/-], O'Brien's [+/-]. A: Pt presents with [impingement/RC tear/adhesive capsulitis/post-surgical] of [R/L] shoulder. Functional limitations include [reaching/lifting/ADLs]. P: PT 2-3x/wk x [#] wks. STG: [goal]. LTG: [goal]. Rotator cuff strengthening, scapular stabilization, manual therapy, modalities.`,
+“Follow-Up”: `S: Shoulder pain [#]/10. [Overhead] activity [improved/same]. HEP: [compliance]. [New complaints?] O: ROM: Flex [°], Abd [°], ER [°]. Strength: [grade]. Functional reach: [improving/limited]. A: [Progressing toward goals]. [Specific gains noted]. P: Advance strengthening per protocol. Continue POC.`,
+“Re-Eval”: `S: Re-eval for [R/L] shoulder. Pain [#]/10. Gains: [describe]. Limitations: [current]. O: ROM: Flex [°] (was [°]), Abd [°] (was [°]), ER [°] (was [°]). MMT: [current grades vs initial]. A: [#]/[#] STGs met. Skilled care needed for [reason]. P: New goals: [list]. Continue [freq]. Auth needed.`,
+“Discharge”: `S: Discharge. Pain [#]/10 (initial [#]/10). Goals met: [list]. O: ROM: WNL/significantly improved. MMT: [grades]. Functional: [overhead reach, lifting]. A: Goals achieved. Independent with HEP and functional activities. P: HEP continuation. MD follow-up [timeframe]. RTC PRN.`
+},
+“Knee Pain”: {
+“Initial Eval”: `S: Pt presents with [R/L] knee pain x [duration], rated [#]/10. Mechanism: [OA/sprain/post-surgical/meniscal]. Stairs: [limited/unable]. Ambulation: [# blocks]. Swelling: [present/absent]. O: Gait: [antalgic/WNL]. ROM: Flex [°], Ext [°] (deficit: [°]). Effusion: [trace/moderate/severe]. MMT: Quads [/5], Hams [/5]. Special tests: McMurray [+/-], Lachman [+/-], Valgus/Varus stress [+/-]. Patellar mobility: [WNL/restricted]. A: Pt presents with [OA/sprain/post-op] of [R/L] knee. Functional limitations: [stairs/walking/squatting]. P: PT 2-3x/wk x [#] wks. STG: [goal]. LTG: [goal]. Quad strengthening, ROM, manual therapy, gait training, modalities.`,
+“Follow-Up”: `S: Knee pain [#]/10. Stairs [better/same]. Swelling [improved/unchanged]. HEP [compliance]. O: ROM: Flex [°], Ext [°]. Effusion: [amount]. Quad strength: [grade]. Gait: [improved/antalgic]. A: [Progressing/plateaued]. Specific gains: [list]. P: Advance per protocol. Continue POC.`,
+“Re-Eval”: `S: Re-eval [R/L] knee. Pain [#]/10. Progress: [describe]. Current limitations: [list]. O: ROM: Flex [°] (was [°]), Ext [°] (was [°]). Effusion: [current]. MMT: Quads [/5] (was [/5]). A: [#]/[#] goals met. Continued care needed for [reason]. P: Updated goals: [list]. Auth request. [Freq] x [weeks].`,
+“Discharge”: `S: Discharge. Pain [#]/10 (initial [#]/10). Goals: [met/substantially met]. O: ROM: Flex [°], Ext [°]. MMT: Quads [/5]. Gait: WNL. Functional: stairs independent. A: Goals met. Independent with HEP and functional activities. P: HEP. MD follow-up. RTC PRN if regression.`
+},
+“Radiculopathy”: {
+“Initial Eval”: `S: Pt presents with [cervical/lumbar] radiculopathy, symptoms include [pain/numbness/tingling] radiating to [UE/LE distribution], rated [#]/10. Mechanism: [disc herniation/stenosis/trauma]. Bowel/bladder: [intact/changes – red flag screen]. O: Dermatomal sensation: [C5-T1 or L1-S1 levels, findings]. Myotomal strength: [test each level]. Reflexes: [biceps/triceps/brachioradialis or patellar/achilles, grading]. Special tests: [Spurling's/SLR/Slump/FABER findings]. A: Presentation consistent with [C[#]/L[#]-S[#]] radiculopathy. Red flags: [absent/present, specify]. Functional limitations: [list]. P: PT [#]x/wk. STG/LTG: [goals]. Neural mobilization, traction/decompression, core/shoulder stabilization, patient education.`,
+“Follow-Up”: `S: Radicular symptoms [better/same/worse]. Distribution: [same/changed]. HEP compliance [good/fair/poor]. Pain [#]/10. O: Neuro screen: sensation [changed], strength [changed/same]. Functional: [improved]. A: [Centralizing/peripheralizing/stable]. [Progress noted]. P: Continue POC. [Modifications]. Monitor for red flags.`,
+“Re-Eval”: `S: Re-eval radiculopathy. Pain [#]/10. Neurological status: [improved/stable]. Limitations: [current]. O: Dermatomal: [current vs initial]. Myotomal: [current grades]. Reflexes: [current]. A: [Improving/stable]. Skilled PT warranted for [reason]. P: Updated goals. Auth needed. Continue [freq].`,
+“Discharge”: `S: Discharge radiculopathy. Symptoms [#]/10 (initial [#]/10). [Centralized/resolved]. O: Neuro screen: sensation intact bilat. Strength [grade]. Reflexes [WNL]. HEP independent. A: Goals met. Neurological function improved. Independent function achieved. P: HEP. Spine hygiene education. MD follow-up. RTC PRN.`
+},
+“Post-Surgical”: {
+“Initial Eval”: `S: Pt s/p [procedure] on [date], referred for outpatient PT. Incision: [healing/well-healed]. Pain: [#]/10. Precautions: [WB status, ROM restrictions, activity limitations per surgeon]. O: Incision: [description]. Edema: [location, severity]. ROM: [per restrictions]. Strength (if cleared): [findings]. Gait: [with/without AD]. A: Pt is [#] weeks s/p [procedure]. Currently in [phase of rehab protocol]. Functional limitations: [list]. Precautions strictly observed. P: PT per [protocol name] [#]x/wk. STG: [goal]. LTG: [goal]. Coordinate with surgeon PRN.`,
+“Follow-Up”: `S: Post-op day [#]/week [#]. Pain [#]/10. Precautions: [maintained]. HEP: [compliance]. [Concerns/progress]. O: Swelling: [improved/unchanged]. ROM: [current vs allowed]. Weight-bearing: [status]. Gait: [improved/unchanged]. A: [On track with protocol/modifications needed]. Phase: [current phase]. P: Advance per protocol stage [#]. Continue [freq].`,
+“Re-Eval”: `S: Re-eval [#] weeks post-op. Pain [#]/10. Protocol phase: [current]. Progress: [describe]. O: ROM: [current vs goal for phase]. Strength: [current]. Functional tests: [if applicable]. A: [On track/behind/ahead] of protocol. Skilled care needed for [reason]. P: Updated goals per protocol. Auth request. Continue [freq].`,
+“Discharge”: `S: Discharge [#] weeks post-op. Pain [#]/10 (initial [#]/10). Phase [#] completed. O: ROM: [values vs norms]. Strength: [grades]. Function: [return to work/sport/ADL status]. A: Protocol goals met. [Return to activity] criteria [met/partially met]. P: HEP advancement schedule. MD clearance for [activity]. RTC PRN.`
+},
+“Balance/Vestibular”: {
+“Initial Eval”: `S: Pt presents with [dizziness/vertigo/imbalance] x [duration]. Onset: [positional/spontaneous/gradual]. Falls hx: [# falls in last year]. Provoked by: [head movement/position change/other]. Nausea: [yes/no]. O: Dix-Hallpike: [R/L positive/negative, nystagmus type]. Roll test: [R/L positive/negative]. Balance: Berg Balance Scale [#/56], TUG [sec], mCTSIB [findings]. Gait: [steady/unsteady, assistive device]. A: Pt presents with [BPPV/unilateral hypofunction/bilateral hypofunction/central cause – refer out if suspected]. Fall risk: [low/moderate/high]. P: PT [#]x/wk x [#] wks. CRM [canal repositioning maneuver], balance training, gaze stabilization. STG/LTG: [goals].`,
+“Follow-Up”: `S: Dizziness [better/same/worse]. Falls since last visit: [#]. Balance confidence: [improved/same]. HEP [compliance]. O: Dix-Hallpike: [pos/neg]. Berg: [#]. TUG: [sec]. [Specific balance tasks]. A: [Progressing toward goals]. Canal: [cleared/persistent/switched canal]. P: Continue/modify maneuvers. Advance balance training.`,
+“Re-Eval”: `S: Re-eval balance/vestibular. Symptoms [#]/10. Falls: [#] since initial. Confidence: [improved]. O: Dix-Hallpike: [current]. Berg: [#] (was [#]). TUG: [sec] (was [sec]). A: [Improved/stable]. Skilled care needed for [reason]. P: Updated goals. Auth needed. Continue [freq].`,
+“Discharge”: `S: Discharge. Dizziness [resolved/minimal]. Falls [#] in last month (initial rate: [#/month]). O: Dix-Hallpike negative bilat. Berg [#/56]. TUG [sec]. Independent with HEP. A: Goals met. Fall risk reduced. Independent in functional mobility. P: HEP for maintenance. Falls prevention strategies reviewed. RTC PRN.`
+},
+“General Orthopedic”: {
+“Initial Eval”: `S: Pt presents with [complaint] x [duration], rated [#]/10. Mechanism: [insidious/trauma/post-surgical]. Functional limitations: [list]. Prior treatment: [none/previous PT/injections/surgery]. O: Posture: [findings]. ROM: [joints tested, values]. Strength: [MMT grades]. Special tests: [relevant tests, findings]. Palpation: [tenderness locations]. Functional tasks: [sit-stand/stairs/ambulation findings]. A: Pt presents with [diagnosis]. Functional limitations include [list]. Rehab potential: [good/fair/poor]. P: PT [#]x/wk x [#] wks. STG: [goal]. LTG: [goal]. Plan: therapeutic exercise, manual therapy, functional training, modalities, HEP.`,
+“Follow-Up”: `S: Pain [#]/10. [Functional activity] [better/same/worse]. HEP compliance [good/fair/poor]. [New complaints]. O: ROM: [values]. Strength: [grades]. Functional: [current status]. A: [Progressing/plateaued]. Gains noted: [describe]. P: Continue POC. [Modifications]. Reassess in [#] visits.`,
+“Re-Eval”: `S: Re-evaluation. Pain [#]/10. Progress: [describe]. Current limitations: [list]. O: ROM: [current vs initial]. Strength: [current vs initial]. Functional tests: [results]. A: [#]/[#] goals met. Continued skilled PT warranted. P: Revised STG/LTG. Auth request. Continue [freq] x [weeks].`,
+“Discharge”: `S: Discharge visit. Pain [#]/10 (initial [#]/10). Goals: [met/substantially met]. O: ROM: [values]. Strength: [grades]. Functional: [current status]. HEP: independent. A: Goals achieved. Functional independence established. P: HEP. MD follow-up [timeframe]. RTC PRN.`
+}
+};
+
+// ─── UI Components ────────────────────────────────────────────────────────────
+const styles = {
+app: { display:“flex”, height:“100vh”, overflow:“hidden” },
+sidebar: {
+width:220, background:T.bgCard, borderRight:`1px solid ${T.border}`,
+display:“flex”, flexDirection:“column”, flexShrink:0, overflowY:“auto”
+},
+logo: {
+padding:“18px 16px 12px”, borderBottom:`1px solid ${T.border}`,
+fontSize:13, fontWeight:700, color:T.blue, letterSpacing:“0.02em”, lineHeight:1.3
+},
+nav: { padding:“8px 0”, flex:1 },
+navItem: (active) => ({
+display:“flex”, alignItems:“center”, gap:8, padding:“9px 16px”,
+cursor:“pointer”, fontSize:13, fontWeight:500,
+color: active ? T.blue : T.textMuted,
+background: active ? `${T.blue}18` : “transparent”,
+borderLeft: active ? `3px solid ${T.blue}` : “3px solid transparent”,
+transition:“all .15s”,
+}),
+main: { flex:1, display:“flex”, flexDirection:“column”, overflow:“hidden” },
+header: {
+padding:“14px 24px”, borderBottom:`1px solid ${T.border}`,
+background:T.bgCard, display:“flex”, alignItems:“center”, justifyContent:“space-between”
+},
+content: { flex:1, overflowY:“auto”, padding:“20px 24px” },
+card: {
+background:T.bgCard, border:`1px solid ${T.border}`, borderRadius:10,
+padding:16, marginBottom:12
+},
+grid: (cols=2) => ({
+display:“grid”, gridTemplateColumns:`repeat(${cols}, 1fr)`, gap:12
+}),
+btn: (variant=“primary”) => ({
+background: variant===“primary” ? T.blue : variant===“danger” ? T.red+“22” : T.bgHover,
+color: variant===“primary” ? “#fff” : variant===“danger” ? T.red : T.text,
+border: variant===“danger” ? `1px solid ${T.red}44` : “none”,
+padding:“7px 14px”, borderRadius:6, fontSize:13, fontWeight:500,
+cursor:“pointer”, transition:“all .15s”,
+}),
+badge: (color) => ({
+display:“inline-flex”, alignItems:“center”, padding:“2px 8px”,
+borderRadius:99, fontSize:11, fontWeight:600,
+background: `${color}22`, color: color, border:`1px solid ${color}44`
+}),
+progress: { height:6, borderRadius:3, background:T.border, overflow:“hidden” },
+modal: {
+position:“fixed”, inset:0, background:”#00000088”,
+display:“flex”, alignItems:“center”, justifyContent:“center”, zIndex:1000
+},
+modalBox: {
+background:T.bgCard, border:`1px solid ${T.borderBright}`, borderRadius:12,
+padding:24, width:“min(600px, 95vw)”, maxHeight:“85vh”, overflowY:“auto”
+},
+statCard: {
+background:T.bgCard, border:`1px solid ${T.border}`, borderRadius:10,
+padding:“16px 20px”, display:“flex”, flexDirection:“column”, gap:4
+},
+tag: {
+display:“inline-block”, padding:“2px 7px”, borderRadius:4,
+fontSize:11, fontWeight:600, background:T.border, color:T.textMuted
+},
+};
+
+const Btn = ({children, onClick, variant=“primary”, style={}, disabled=false}) => (
+<button onClick={onClick} disabled={disabled}
+style={{…styles.btn(variant), opacity:disabled?.6:1, …style}}>
+{children}
+</button>
+);
+const Badge = ({children, color=T.blue}) => <span style={styles.badge(color)}>{children}</span>;
+const Field = ({label, children}) => (
+
+  <div style={{marginBottom:12}}>
+    {label && <label>{label}</label>}
+    {children}
+  </div>
+);
+const SectionTitle = ({children}) => (
+  <div style={{fontSize:11, fontWeight:700, letterSpacing:"0.08em",
+    color:T.textDim, textTransform:"uppercase", marginBottom:12, marginTop:4}}>
+    {children}
+  </div>
+);
+const Divider = () => <div style={{borderTop:`1px solid ${T.border}`, margin:"14px 0"}} />;
+const Tip = ({children}) => (
+  <div style={{background:`${T.yellow}15`, border:`1px solid ${T.yellow}44`,
+    borderRadius:6, padding:"8px 12px", fontSize:12, color:T.yellow, marginBottom:12}}>
+    ⚠ {children}
+  </div>
+);
+const Alert = ({children, color=T.red}) => (
+  <div style={{background:`${color}15`, border:`1px solid ${color}44`,
+    borderRadius:6, padding:"8px 12px", fontSize:12, color, marginBottom:8}}>
+    {children}
+  </div>
+);
+const Progress = ({value, max, color}) => {
+  const pct = max > 0 ? Math.min(100, (value/max)*100) : 0;
+  const c = pct >= 90 ? T.red : pct >= 75 ? T.yellow : T.green;
+  return (
+    <div style={styles.progress}>
+      <div style={{height:"100%", width:`${pct}%`, background:color||c, borderRadius:3, transition:"width .3s"}} />
+    </div>
+  );
+};
+const Modal = ({show, onClose, title, children}) => {
+  if (!show) return null;
+  return (
+    <div style={styles.modal} onClick={e => e.target===e.currentTarget && onClose()}>
+      <div style={styles.modalBox}>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16}}>
+          <span style={{fontWeight:700, fontSize:16}}>{title}</span>
+          <button onClick={onClose} style={{background:"none",border:"none",color:T.textMuted,fontSize:20,lineHeight:1,cursor:"pointer"}}>×</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+};
+
+// ─── TAB: PATIENTS ────────────────────────────────────────────────────────────
+function PatientsTab({patients, setPatients}) {
+const empty = {
+id:””, initials:””, chartNum:””, caseType:“Standard”, coPay:””,
+referringProvider:””, icd10:””, customDx:””, goals:[], goalNotes:{}, notes:””
+};
+const [form, setForm] = useState({…empty});
+const [editing, setEditing] = useState(null);
+const [showForm, setShowForm] = useState(false);
+const [customGoal, setCustomGoal] = useState(””);
+
+const save = () => {
+if (!form.initials || !form.chartNum) return alert(“Initials and Chart # required.”);
+if (editing) {
+setPatients(p => p.map(x => x.id===editing ? {…form, id:editing} : x));
+} else {
+setPatients(p => […p, {…form, id:uid()}]);
+}
+setForm({…empty}); setEditing(null); setShowForm(false);
+};
+const edit = (p) => { setForm({…p}); setEditing(p.id); setShowForm(true); };
+const del = (id) => { if(confirm(“Delete patient?”)) setPatients(p=>p.filter(x=>x.id!==id)); };
+const toggleGoal = (g) => {
+setForm(f => ({…f, goals: f.goals.includes(g) ? f.goals.filter(x=>x!==g) : […f.goals, g]}));
+};
+
+return (
+<div>
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“center”, marginBottom:16}}>
+<span style={{fontSize:18, fontWeight:700}}>Patients</span>
+<Btn onClick={()=>{setForm({…empty});setEditing(null);setShowForm(true)}}>+ Add Patient</Btn>
+</div>
+{patients.map(p => (
+<div key={p.id} style={styles.card}>
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“flex-start”}}>
+<div>
+<span style={{fontWeight:700, fontSize:15}}>{p.initials}</span>
+<span style={{color:T.textMuted, fontSize:12, marginLeft:10}}>#{p.chartNum}</span>
+<span style={{marginLeft:10}}><Badge>{p.caseType}</Badge></span>
+</div>
+<div style={{display:“flex”, gap:6}}>
+<Btn variant=“ghost” onClick={()=>edit(p)}>Edit</Btn>
+<Btn variant=“danger” onClick={()=>del(p.id)}>Del</Btn>
+</div>
+</div>
+<div style={{marginTop:8, display:“flex”, flexWrap:“wrap”, gap:“6px 16px”, fontSize:12, color:T.textMuted}}>
+{p.coPay && <span>Co-pay: <b style={{color:T.text}}>${p.coPay}</b></span>}
+{p.referringProvider && <span>Ref: <b style={{color:T.text}}>{p.referringProvider}</b></span>}
+{p.icd10 && <span>Dx: <b style={{color:T.text}}>{p.icd10===“Custom” ? p.customDx : p.icd10}</b></span>}
+</div>
+{p.goals.length > 0 && (
+<div style={{marginTop:8, display:“flex”, flexWrap:“wrap”, gap:4}}>
+{p.goals.map(g => (
+<span key={g} style={{…styles.tag, color:T.blue}}>✓ {g}</span>
+))}
+</div>
+)}
+{p.notes && <div style={{marginTop:8, fontSize:12, color:T.textMuted, fontStyle:“italic”}}>📋 {p.notes.slice(0,120)}{p.notes.length>120?”…”:””}</div>}
+</div>
+))}
+{patients.length===0 && <div style={{color:T.textMuted, textAlign:“center”, padding:40}}>No patients yet. Add one to get started.</div>}
+
+```
+  <Modal show={showForm} onClose={()=>setShowForm(false)} title={editing?"Edit Patient":"Add Patient"}>
+    <Tip>HIPAA Notice: Use initials + WebPT chart # only. Do not enter full names, DOB, or phone numbers.</Tip>
+    <div style={styles.grid(2)}>
+      <Field label="Initials *"><input value={form.initials} onChange={e=>setForm(f=>({...f,initials:e.target.value}))} placeholder="e.g. J.D."/></Field>
+      <Field label="WebPT Chart # *"><input value={form.chartNum} onChange={e=>setForm(f=>({...f,chartNum:e.target.value}))} placeholder="e.g. 00123"/></Field>
+      <Field label="Case Type">
+        <select value={form.caseType} onChange={e=>setForm(f=>({...f,caseType:e.target.value}))}>
+          {CASE_TYPES.map(t=><option key={t}>{t}</option>)}
+        </select>
+      </Field>
+      <Field label="Co-Pay ($)"><input type="number" value={form.coPay} onChange={e=>setForm(f=>({...f,coPay:e.target.value}))} placeholder="0.00"/></Field>
+      <Field label="Referring Provider"><input value={form.referringProvider} onChange={e=>setForm(f=>({...f,referringProvider:e.target.value}))} placeholder="Dr. Smith"/></Field>
+      <Field label="ICD-10 Diagnosis">
+        <select value={form.icd10} onChange={e=>setForm(f=>({...f,icd10:e.target.value}))}>
+          <option value="">— Select —</option>
+          {ICD10_LIST.map(d=><option key={d} value={d}>{d}</option>)}
+        </select>
+      </Field>
+    </div>
+    {form.icd10==="Custom" && <Field label="Custom Diagnosis"><input value={form.customDx} onChange={e=>setForm(f=>({...f,customDx:e.target.value}))} placeholder="Describe diagnosis"/></Field>}
+    <SectionTitle>Patient Goals</SectionTitle>
+    <div style={{display:"flex", flexWrap:"wrap", gap:6, marginBottom:12}}>
+      {PATIENT_GOALS.filter(g=>g!=="Custom goal…").map(g => (
+        <div key={g} onClick={()=>toggleGoal(g)} style={{
+          padding:"4px 10px", borderRadius:20, fontSize:12, cursor:"pointer",
+          background: form.goals.includes(g) ? `${T.blue}33` : T.bgHover,
+          border:`1px solid ${form.goals.includes(g) ? T.blue : T.border}`,
+          color: form.goals.includes(g) ? T.blue : T.textMuted,
+        }}>{form.goals.includes(g)?"✓ ":""}{g}</div>
+      ))}
+    </div>
+    <div style={{display:"flex", gap:8, marginBottom:12}}>
+      <input value={customGoal} onChange={e=>setCustomGoal(e.target.value)} placeholder="Custom goal…" style={{flex:1}}/>
+      <Btn onClick={()=>{if(customGoal){setForm(f=>({...f,goals:[...f.goals,customGoal]}));setCustomGoal("");}}} variant="ghost">Add</Btn>
+    </div>
+    <Field label="Clinical Notes">
+      <textarea rows={3} value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Clinical observations, flags, general notes…"/>
+    </Field>
+    <div style={{display:"flex", gap:8, justifyContent:"flex-end"}}>
+      <Btn variant="ghost" onClick={()=>setShowForm(false)}>Cancel</Btn>
+      <Btn onClick={save}>{editing?"Save Changes":"Add Patient"}</Btn>
+    </div>
+  </Modal>
+</div>
+```
+
+);
+}
+
+// ─── TAB: AUTHORIZATIONS ─────────────────────────────────────────────────────
+function AuthsTab({patients, auths, setAuths}) {
+const empty = {
+id:””, patientId:””, authNum:””, insurance:””, startDate:””, endDate:””,
+visitsApproved:””, visitsUsed:0, expiryReminder:7
+};
+const [form, setForm] = useState({…empty});
+const [editing, setEditing] = useState(null);
+const [showForm, setShowForm] = useState(false);
+
+const save = () => {
+if (!form.patientId || !form.authNum) return alert(“Patient and Auth # required.”);
+if (editing) setAuths(a=>a.map(x=>x.id===editing?{…form,id:editing}:x));
+else setAuths(a=>[…a,{…form,id:uid(),visitsUsed:Number(form.visitsUsed)||0}]);
+setForm({…empty}); setEditing(null); setShowForm(false);
+};
+const edit = (a) => { setForm({…a}); setEditing(a.id); setShowForm(true); };
+const del = (id) => { if(confirm(“Delete auth?”)) setAuths(a=>a.filter(x=>x.id!==id)); };
+
+const getAlerts = (a) => {
+const alerts = [];
+const remaining = (Number(a.visitsApproved)||0) - (Number(a.visitsUsed)||0);
+if (remaining <= 2) alerts.push({msg:`⚠ Only ${remaining} visit(s) remaining!`, color:T.red});
+if (a.endDate) {
+const days = daysBetween(today(), a.endDate);
+if (days <= (Number(a.expiryReminder)||7) && days >= 0)
+alerts.push({msg:`⏰ Auth expires in ${days} day(s)`, color:T.yellow});
+if (days < 0) alerts.push({msg:`❌ Auth EXPIRED ${Math.abs(days)}d ago`, color:T.red});
+}
+return alerts;
+};
+const getPatient = id => patients.find(p=>p.id===id);
+
+return (
+<div>
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“center”, marginBottom:16}}>
+<span style={{fontSize:18, fontWeight:700}}>Authorizations</span>
+<Btn onClick={()=>{setForm({…empty});setEditing(null);setShowForm(true)}}>+ Add Auth</Btn>
+</div>
+{auths.map(a => {
+const pt = getPatient(a.patientId);
+const used = Number(a.visitsUsed)||0;
+const approved = Number(a.visitsApproved)||0;
+const alerts = getAlerts(a);
+return (
+<div key={a.id} style={styles.card}>
+{alerts.map((al,i)=><Alert key={i} color={al.color}>{al.msg}</Alert>)}
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“flex-start”}}>
+<div>
+<span style={{fontWeight:700}}>{pt ? `${pt.initials} (#${pt.chartNum})` : “—”}</span>
+<span style={{color:T.textMuted, fontSize:12, marginLeft:10}}>{a.insurance}</span>
+<span style={{marginLeft:10, fontSize:12, color:T.blue}}>Auth: {a.authNum}</span>
+</div>
+<div style={{display:“flex”, gap:6}}>
+<Btn variant=“ghost” onClick={()=>edit(a)}>Edit</Btn>
+<Btn variant=“danger” onClick={()=>del(a.id)}>Del</Btn>
+</div>
+</div>
+<div style={{marginTop:10}}>
+<div style={{display:“flex”, justifyContent:“space-between”, fontSize:12, color:T.textMuted, marginBottom:4}}>
+<span>Visits: <b style={{color:T.text}}>{used} / {approved}</b></span>
+<span>{approved-used} remaining</span>
+</div>
+<Progress value={used} max={approved}/>
+</div>
+<div style={{marginTop:8, display:“flex”, gap:16, fontSize:12, color:T.textMuted}}>
+<span>Start: <b style={{color:T.text}}>{fmt(a.startDate)}</b></span>
+<span>End: <b style={{color:T.text}}>{fmt(a.endDate)}</b></span>
+<span>Reminder: <b style={{color:T.text}}>{a.expiryReminder}d before</b></span>
+</div>
+</div>
+);
+})}
+{auths.length===0 && <div style={{color:T.textMuted, textAlign:“center”, padding:40}}>No authorizations yet.</div>}
+
+```
+  <Modal show={showForm} onClose={()=>setShowForm(false)} title={editing?"Edit Auth":"Add Authorization"}>
+    <div style={styles.grid(2)}>
+      <Field label="Patient *">
+        <select value={form.patientId} onChange={e=>setForm(f=>({...f,patientId:e.target.value}))}>
+          <option value="">— Select —</option>
+          {patients.map(p=><option key={p.id} value={p.id}>{p.initials} #{p.chartNum}</option>)}
+        </select>
+      </Field>
+      <Field label="Auth Number *"><input value={form.authNum} onChange={e=>setForm(f=>({...f,authNum:e.target.value}))} placeholder="Auth #"/></Field>
+      <Field label="Insurance / Payer"><input value={form.insurance} onChange={e=>setForm(f=>({...f,insurance:e.target.value}))} placeholder="Insurer name"/></Field>
+      <Field label="Expiry Reminder (days before)"><input type="number" value={form.expiryReminder} onChange={e=>setForm(f=>({...f,expiryReminder:e.target.value}))} placeholder="7"/></Field>
+      <Field label="Start Date"><input type="date" value={form.startDate} onChange={e=>setForm(f=>({...f,startDate:e.target.value}))}/></Field>
+      <Field label="End Date"><input type="date" value={form.endDate} onChange={e=>setForm(f=>({...f,endDate:e.target.value}))}/></Field>
+      <Field label="Visits Approved"><input type="number" value={form.visitsApproved} onChange={e=>setForm(f=>({...f,visitsApproved:e.target.value}))} placeholder="e.g. 20"/></Field>
+      <Field label="Visits Used"><input type="number" value={form.visitsUsed} onChange={e=>setForm(f=>({...f,visitsUsed:e.target.value}))} placeholder="0"/></Field>
+    </div>
+    <div style={{display:"flex", gap:8, justifyContent:"flex-end"}}>
+      <Btn variant="ghost" onClick={()=>setShowForm(false)}>Cancel</Btn>
+      <Btn onClick={save}>{editing?"Save Changes":"Add Auth"}</Btn>
+    </div>
+  </Modal>
+</div>
+```
+
+);
+}
+
+// ─── TAB: APPOINTMENTS ───────────────────────────────────────────────────────
+function AppointmentsTab({patients, auths, setAuths, appointments, setAppointments}) {
+const [closedDays, setClosedDays] = useLS(“chpt_closeddays”, []);
+const toggleClosed = (day) => setClosedDays(d => d.includes(day) ? d.filter(x=>x!==day) : […d, day]);
+const empty = {
+id:””, patientId:””, authId:””, date:””, time:””, visitType:“Follow-Up”,
+attendance:“Scheduled”, cptCodes:[], coPayCollected:false, notes:””
+};
+const [form, setForm] = useState({…empty, cptCodes:[{code:“97110”,units:1}]});
+const [editing, setEditing] = useState(null);
+const [showForm, setShowForm] = useState(false);
+const [filterDate, setFilterDate] = useState(””);
+const [selectedPt, setSelectedPt] = useState(””);
+
+const save = () => {
+if (!form.patientId || !form.date) return alert(“Patient and date required.”);
+const prev = editing ? appointments.find(x=>x.id===editing) : null;
+const wasAttended = prev?.attendance===“Attended”;
+const isNowAttended = form.attendance===“Attended”;
+if (editing) {
+setAppointments(a=>a.map(x=>x.id===editing?{…form,id:editing}:x));
+// update visits used
+if (!wasAttended && isNowAttended && form.authId) {
+setAuths(a=>a.map(x=>x.id===form.authId?{…x,visitsUsed:(Number(x.visitsUsed)||0)+1}:x));
+} else if (wasAttended && !isNowAttended && form.authId) {
+setAuths(a=>a.map(x=>x.id===form.authId?{…x,visitsUsed:Math.max(0,(Number(x.visitsUsed)||0)-1)}:x));
+}
+} else {
+setAppointments(a=>[…a,{…form,id:uid()}]);
+if (isNowAttended && form.authId) {
+setAuths(a=>a.map(x=>x.id===form.authId?{…x,visitsUsed:(Number(x.visitsUsed)||0)+1}:x));
+}
+}
+setForm({…empty, cptCodes:[{code:“97110”,units:1}]}); setEditing(null); setShowForm(false);
+};
+
+const markAttended = (appt) => {
+if (appt.attendance===“Attended”) return;
+setAppointments(a=>a.map(x=>x.id===appt.id?{…x,attendance:“Attended”}:x));
+if (appt.authId) setAuths(a=>a.map(x=>x.id===appt.id?{…x,visitsUsed:(Number(x.visitsUsed)||0)+1}:x));
+if (appt.authId) setAuths(a=>a.map(x=>x.id===appt.authId?{…x,visitsUsed:(Number(x.visitsUsed)||0)+1}:x));
+};
+
+const [confirmDel, setConfirmDel] = useState(null);
+const edit = (a) => { setForm({…a}); setEditing(a.id); setShowForm(true); };
+const del = (id) => { if(confirmDel===id) { setAppointments(a=>a.filter(x=>x.id!==id)); setConfirmDel(null); } else { setConfirmDel(id); setTimeout(()=>setConfirmDel(null), 3000); } };
+
+const addCpt = () => setForm(f=>({…f,cptCodes:[…f.cptCodes,{code:“97110”,units:1}]}));
+const removeCpt = (i) => setForm(f=>({…f,cptCodes:f.cptCodes.filter((_,j)=>j!==i)}));
+const setCpt = (i,field,val) => setForm(f=>({…f,cptCodes:f.cptCodes.map((c,j)=>j===i?{…c,[field]:val}:c)}));
+
+const getPatient = id => patients.find(p=>p.id===id);
+const getAuth = id => auths.find(a=>a.id===id);
+
+const filtered = appointments
+.filter(a => !filterDate || a.date===filterDate)
+.filter(a => !selectedPt || a.patientId===selectedPt)
+.sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time));
+
+const [showExport, setShowExport] = useState(false);
+const [exportRows, setExportRows] = useState([]);
+const [exportTitle, setExportTitle] = useState(””);
+const [csvCopied, setCsvCopied] = useState(false);
+const [billerCpts, setBillerCpts] = useState({}); // { patientId: { cptCode: units } }
+
+const toggleBillerCpt = (pid, cpt) => {
+setBillerCpts(prev => {
+const current = prev[pid]?.[cpt] || 0;
+const next = current === 0 ? 1 : current === 1 ? 2 : 0;
+return {…prev, [pid]: {…(prev[pid]||{}), [cpt]: next}};
+});
+};
+
+const buildRowsFromList = (apptList) => {
+const headers = [“Date”,“Time”,“Patient Initials”,“WebPT Chart #”,“Case Type”,“Visit Type”,“Attendance”,“Auth #”,“Insurance”,“CPT Codes”,“Total Units”,“Co-Pay Collected”,“Notes”];
+const rows = apptList.map(a => {
+const pt = getPatient(a.patientId);
+const auth = getAuth(a.authId);
+const cpts = (a.cptCodes||[]).map(c=>`${c.code}(${c.units}u)`).join(” | “);
+return [
+a.date, a.time, pt?.initials||””, pt?.chartNum||””, pt?.caseType||””,
+a.visitType, a.attendance, auth?.authNum||””, auth?.insurance||””,
+cpts, (a.cptCodes||[]).reduce((s,c)=>s+c.units,0),
+a.coPayCollected?“Yes”:“No”, a.notes||””
+];
+});
+return { headers, rows };
+};
+
+const copyCSV = (apptList) => {
+const { headers, rows } = buildRowsFromList(apptList);
+const csv = [headers,…rows].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(”,”)).join(”\n”);
+navigator.clipboard.writeText(csv).then(()=>{setCsvCopied(true); setTimeout(()=>setCsvCopied(false),2500);});
+};
+
+const exportCSV = () => {
+setExportRows(filtered);
+setExportTitle(filterDate ? fmt(filterDate) : “All Dates”);
+prefillBillerCpts(filtered);
+copyCSV(filtered);
+setShowExport(true);
+};
+
+const exportWeek = () => {
+const days = Array.from({length:6}, (_,i) => addDays(weekStart, i));
+const weekAppts = appointments
+.filter(a => days.includes(a.date))
+.sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time));
+setExportRows(weekAppts);
+setExportTitle(`Week of ${new Date(weekStart+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})} – ${new Date(addDays(weekStart,5)+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}`);
+prefillBillerCpts(weekAppts);
+copyCSV(weekAppts);
+setShowExport(true);
+};
+
+const prefillBillerCpts = (apptList) => {
+const map = {};
+apptList.filter(a=>a.attendance===“Attended”).forEach(a => {
+if (!map[a.patientId]) map[a.patientId] = {};
+(a.cptCodes||[]).forEach(c => {
+map[a.patientId][c.code] = (map[a.patientId][c.code]||0) + c.units;
+});
+});
+setBillerCpts(map);
+};
+
+const attColor = s => s===“Attended”?T.green:s===“No-Show”?T.red:s===“Cancelled”?T.orange:s===“Closed”?T.textDim:T.blue;
+
+// Week view helpers
+const [viewMode, setViewMode] = useState(“week”);
+const [weekStart, setWeekStart] = useState(() => {
+const d = new Date(); d.setDate(d.getDate() - d.getDay() + 1); // Monday
+return d.toISOString().slice(0,10);
+});
+const weekDays = Array.from({length:6},(_,i) => addDays(weekStart, i)); // Mon–Sat
+const prevWeek = () => setWeekStart(w => addDays(w,-7));
+const nextWeek = () => setWeekStart(w => addDays(w, 7));
+const goToday = () => { const d=new Date(); d.setDate(d.getDate()-d.getDay()+1); setWeekStart(d.toISOString().slice(0,10)); };
+const DAY_NAMES = [“Mon”,“Tue”,“Wed”,“Thu”,“Fri”,“Sat”];
+const fmtShort = d => new Date(d+“T12:00:00”).toLocaleDateString(“en-US”,{month:“short”,day:“numeric”});
+
+return (
+<div>
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“center”, marginBottom:12}}>
+<span style={{fontSize:18, fontWeight:700}}>Appointments</span>
+<div style={{display:“flex”, gap:8}}>
+<Btn variant="ghost" onClick={exportCSV}>📋 Biller Export</Btn>
+<Btn onClick={()=>{setForm({…empty,cptCodes:[{code:“97110”,units:1}]});setEditing(null);setShowForm(true)}}>+ Add Appt</Btn>
+</div>
+</div>
+
+```
+  {/* View toggle */}
+  <div style={{display:"flex", gap:6, marginBottom:12}}>
+    {["week","list"].map(m=>(
+      <div key={m} onClick={()=>setViewMode(m)} style={{
+        padding:"5px 14px", borderRadius:20, fontSize:12, cursor:"pointer", fontWeight:600,
+        background: viewMode===m ? `${T.blue}33` : T.bgHover,
+        border: `1px solid ${viewMode===m ? T.blue : T.border}`,
+        color: viewMode===m ? T.blue : T.textMuted,
+      }}>{m==="week"?"📅 Week View":"📋 List View"}</div>
+    ))}
+  </div>
+
+  {/* ── WEEK VIEW ── */}
+  {viewMode==="week" && (
+    <div>
+      {/* Week nav */}
+      <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:12, flexWrap:"wrap"}}>
+        <Btn variant="ghost" onClick={prevWeek} style={{padding:"5px 10px"}}>‹ Prev</Btn>
+        <Btn variant="ghost" onClick={goToday} style={{padding:"5px 10px", fontSize:11}}>Today</Btn>
+        <Btn variant="ghost" onClick={nextWeek} style={{padding:"5px 10px"}}>Next ›</Btn>
+        <span style={{fontSize:13, fontWeight:600, color:T.text, marginLeft:4}}>
+          {fmtShort(weekStart)} – {fmtShort(addDays(weekStart,5))}
+        </span>
+        <Btn variant="ghost" onClick={()=>exportWeek()} style={{marginLeft:"auto", fontSize:12}}>📋 Export This Week</Btn>
+      </div>
+      {/* Day columns */}
+      <div style={{display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:8, overflowX:"auto"}}>
+        {weekDays.map((day, i) => {
+          const isToday = day === today();
+          const isClosed = closedDays.includes(day);
+          const dayAppts = appointments
+            .filter(a => a.date === day)
+            .sort((a,b) => (a.time||"").localeCompare(b.time||""));
+          return (
+            <div key={day} style={{
+              background: isClosed ? `${T.textDim}18` : isToday ? `${T.blue}18` : T.bgCard,
+              border: `1px solid ${isClosed ? T.textDim : isToday ? T.blue : T.border}`,
+              borderRadius:8, overflow:"hidden", minHeight:120,
+              opacity: isClosed ? 0.75 : 1
+            }}>
+              {/* Day header */}
+              <div style={{
+                padding:"7px 8px", borderBottom:`1px solid ${isClosed?T.textDim:isToday?T.blue:T.border}`,
+                background: isClosed ? `${T.textDim}22` : isToday ? `${T.blue}30` : T.bg,
+                textAlign:"center"
+              }}>
+                <div style={{fontSize:11, fontWeight:700, color:isClosed?T.textDim:isToday?T.blue:T.textMuted}}>{DAY_NAMES[i]}</div>
+                <div style={{fontSize:13, fontWeight:700, color:isClosed?T.textDim:isToday?T.blue:T.text}}>{fmtShort(day)}</div>
+                <div
+                  onClick={()=>toggleClosed(day)}
+                  style={{
+                    marginTop:4, fontSize:10, cursor:"pointer", fontWeight:700,
+                    color: isClosed ? T.red : T.textDim,
+                    background: isClosed ? `${T.red}22` : `${T.textDim}22`,
+                    borderRadius:3, padding:"2px 5px", display:"inline-block"
+                  }}
+                >{isClosed ? "🔒 CLOSED" : "Mark Closed"}</div>
+              </div>
+              {/* Appointments in this day */}
+              <div style={{padding:4}}>
+                {isClosed && (
+                  <div style={{fontSize:11, color:T.textDim, textAlign:"center", padding:"10px 4px", fontWeight:600}}>Office Closed</div>
+                )}
+                {!isClosed && dayAppts.map(a => {
+                  const pt = getPatient(a.patientId);
+                  return (
+                    <div key={a.id} style={{
+                      background: T.bgHover, borderRadius:5, padding:"5px 7px", marginBottom:4,
+                      borderLeft:`3px solid ${attColor(a.attendance)}`, cursor:"pointer"
+                    }} onClick={()=>edit(a)}>
+                      <div style={{fontWeight:700, fontSize:12, color:T.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>
+                        {a.time && <span style={{color:T.textMuted, marginRight:4, fontSize:11}}>{a.time}</span>}
+                        {pt ? pt.initials : "—"}
+                      </div>
+                      <div style={{fontSize:10, color:T.textMuted, marginTop:1}}>{a.visitType}</div>
+                      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:3}}>
+                        <span style={{fontSize:10, color:attColor(a.attendance), fontWeight:600}}>{a.attendance}</span>
+                        <div style={{display:"flex", gap:4}}>
+                          {a.attendance!=="Attended" && (
+                            <span onClick={e=>{e.stopPropagation();markAttended(a);}} style={{
+                              fontSize:10, color:T.green, cursor:"pointer", fontWeight:700,
+                              background:`${T.green}22`, borderRadius:3, padding:"1px 4px"
+                            }}>✓</span>
+                          )}
+                          <span onClick={e=>{e.stopPropagation();del(a.id);}} style={{
+                            fontSize:10, cursor:"pointer", fontWeight:700,
+                            background: confirmDel===a.id ? `${T.red}44` : `${T.red}22`,
+                            color: T.red, borderRadius:3, padding:"1px 4px"
+                          }}>{confirmDel===a.id ? "Sure?" : "✕"}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {!isClosed && dayAppts.length===0 && (
+                  <div style={{fontSize:11, color:T.textDim, textAlign:"center", padding:"12px 4px"}}>—</div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{marginTop:8, fontSize:11, color:T.textDim}}>Tap any appointment to edit it.</div>
+    </div>
+  )}
+
+  {/* ── LIST VIEW ── */}
+  {viewMode==="list" && (
+    <div>
+      <div style={{display:"flex", gap:8, marginBottom:14, flexWrap:"wrap"}}>
+        <input type="date" value={filterDate} onChange={e=>setFilterDate(e.target.value)} style={{width:160}}/>
+        <select value={selectedPt} onChange={e=>setSelectedPt(e.target.value)} style={{width:200}}>
+          <option value="">All Patients</option>
+          {patients.map(p=><option key={p.id} value={p.id}>{p.initials} #{p.chartNum}</option>)}
+        </select>
+        {(filterDate||selectedPt) && <Btn variant="ghost" onClick={()=>{setFilterDate("");setSelectedPt("");}}>Clear</Btn>}
+        <Btn variant="ghost" onClick={exportCSV} style={{marginLeft:"auto"}}>📋 Biller Export</Btn>
+      </div>
+      {filtered.map(a => {
+        const pt = getPatient(a.patientId);
+        const auth = getAuth(a.authId);
+        return (
+          <div key={a.id} style={styles.card}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start"}}>
+              <div>
+                <span style={{fontWeight:700}}>{pt?`${pt.initials} #${pt.chartNum}`:"—"}</span>
+                <span style={{marginLeft:8, fontSize:12, color:T.textMuted}}>{a.date} {a.time}</span>
+                <span style={{marginLeft:8}}><Badge color={T.blue}>{a.visitType}</Badge></span>
+                <span style={{marginLeft:6}}><Badge color={attColor(a.attendance)}>{a.attendance}</Badge></span>
+              </div>
+              <div style={{display:"flex", gap:6}}>
+                {a.attendance!=="Attended" && <Btn variant="ghost" onClick={()=>markAttended(a)} style={{fontSize:11}}>✓ Attended</Btn>}
+                <Btn variant="ghost" onClick={()=>edit(a)}>Edit</Btn>
+                <Btn variant="danger" onClick={()=>del(a.id)} style={{minWidth:64}}>
+                  {confirmDel===a.id ? "Confirm?" : "Del"}
+                </Btn>
+              </div>
+            </div>
+            <div style={{marginTop:6, display:"flex", flexWrap:"wrap", gap:"4px 16px", fontSize:12, color:T.textMuted}}>
+              {auth && <span>Auth: <b style={{color:T.text}}>{auth.authNum}</b> ({auth.insurance})</span>}
+              {(a.cptCodes||[]).length>0 && <span>CPT: <b style={{color:T.text}}>{(a.cptCodes).map(c=>`${c.code}×${c.units}`).join(", ")}</b></span>}
+              {a.coPayCollected && <span style={{color:T.green}}>✓ Co-pay collected</span>}
+              {!a.coPayCollected && pt?.coPay && <span style={{color:T.orange}}>⚠ Co-pay outstanding (${pt.coPay})</span>}
+            </div>
+            {a.notes && <div style={{marginTop:6, fontSize:12, color:T.textMuted, fontStyle:"italic"}}>{a.notes}</div>}
+          </div>
+        );
+      })}
+      {filtered.length===0 && <div style={{color:T.textMuted, textAlign:"center", padding:40}}>No appointments found.</div>}
+    </div>
+  )}
+
+  <Modal show={showExport} onClose={()=>setShowExport(false)} title="📋 Biller Export">
+    {/* Header bar */}
+    <div style={{marginBottom:16, display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8}}>
+      <span style={{fontSize:13, color:T.textMuted}}>
+        <b style={{color:T.text}}>{exportTitle}</b> · {exportRows.length} appointment{exportRows.length!==1?"s":""}
+      </span>
+      <div style={{display:"flex", gap:8}}>
+        <Btn onClick={()=>copyCSV(exportRows)}>{csvCopied?"✓ Copied!":"Copy CSV to Clipboard"}</Btn>
+      </div>
+    </div>
+
+    {/* Table header */}
+    <div style={{display:"grid", gridTemplateColumns:"40px 110px 70px 90px 100px 110px", gap:0, borderBottom:`2px solid ${T.border}`, paddingBottom:8, marginBottom:4}}>
+      {["Date","Chart #","Patient","Case","Visit Type","Attendance"].map(h=>(
+        <div key={h} style={{fontSize:11, fontWeight:700, color:T.textMuted, padding:"0 8px"}}>{h}</div>
+      ))}
+    </div>
+
+    {/* Rows */}
+    <div style={{maxHeight:420, overflowY:"auto"}}>
+      {exportRows.map((a,i)=>{
+        const pt = getPatient(a.patientId);
+        const attC = a.attendance==="Attended"?T.green:a.attendance==="No-Show"?T.red:a.attendance==="Cancelled"?T.orange:T.blue;
+        return (
+          <div key={a.id} style={{
+            display:"grid", gridTemplateColumns:"40px 110px 70px 90px 100px 110px",
+            alignItems:"center", padding:"10px 0",
+            borderBottom:`1px solid ${T.border}`,
+            background: i%2===0 ? T.bgCard : T.bg
+          }}>
+            <div style={{padding:"0 8px", fontSize:12, color:T.textMuted}}>
+              {new Date(a.date+"T12:00:00").getDate()}
+            </div>
+            <div style={{padding:"0 8px", fontWeight:700, color:T.blue, fontSize:13}}>
+              {pt?.chartNum||"—"}
+            </div>
+            <div style={{padding:"0 8px", fontWeight:700, fontSize:13}}>
+              {pt?.initials||"—"}
+            </div>
+            <div style={{padding:"0 8px", fontSize:12, color:T.textMuted}}>
+              {pt?.caseType||"—"}
+            </div>
+            <div style={{padding:"0 8px", fontSize:12}}>
+              {a.visitType}
+            </div>
+            <div style={{padding:"0 8px"}}>
+              <span style={{...styles.badge(attC), fontSize:11}}>{a.attendance}</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+
+    {exportRows.length===0 && <div style={{color:T.textMuted, textAlign:"center", padding:24}}>No appointments in this range.</div>}
+
+    {/* Footer tip */}
+    <div style={{marginTop:14, padding:"10px 12px", background:`${T.blue}15`, border:`1px solid ${T.blue}33`, borderRadius:6, fontSize:12, color:T.textMuted}}>
+      📱 <b style={{color:T.text}}>Screenshot</b> this to send as image · or tap <b style={{color:T.text}}>Copy CSV to Clipboard</b> and paste into email
+    </div>
+  </Modal>
+
+  <Modal show={showForm} onClose={()=>setShowForm(false)} title={editing?"Edit Appointment":"Add Appointment"}>
+    <div style={styles.grid(2)}>
+      <Field label="Patient *">
+        <select value={form.patientId} onChange={e=>setForm(f=>({...f,patientId:e.target.value,authId:""}))}>
+          <option value="">— Select —</option>
+          {patients.map(p=><option key={p.id} value={p.id}>{p.initials} #{p.chartNum}</option>)}
+        </select>
+      </Field>
+      <Field label="Authorization">
+        <select value={form.authId} onChange={e=>setForm(f=>({...f,authId:e.target.value}))}>
+          <option value="">— None —</option>
+          {auths.filter(a=>a.patientId===form.patientId).map(a=><option key={a.id} value={a.id}>{a.authNum} ({a.insurance})</option>)}
+        </select>
+      </Field>
+      <Field label="Date *"><input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/></Field>
+      <Field label="Time"><input type="time" value={form.time} onChange={e=>setForm(f=>({...f,time:e.target.value}))}/></Field>
+      <Field label="Visit Type">
+        <select value={form.visitType} onChange={e=>setForm(f=>({...f,visitType:e.target.value}))}>
+          {VISIT_TYPES.map(t=><option key={t}>{t}</option>)}
+        </select>
+      </Field>
+      <Field label="Attendance">
+        <select value={form.attendance} onChange={e=>setForm(f=>({...f,attendance:e.target.value}))}>
+          {ATTENDANCE.map(t=><option key={t}>{t}</option>)}
+        </select>
+      </Field>
+    </div>
+    <SectionTitle>CPT Codes</SectionTitle>
+    {form.cptCodes.map((c,i)=>(
+      <div key={i} style={{display:"flex", gap:8, alignItems:"center", marginBottom:8}}>
+        <select value={c.code} onChange={e=>setCpt(i,"code",e.target.value)} style={{flex:2}}>
+          {CPT_CODES.map(cd=><option key={cd}>{cd}</option>)}
+        </select>
+        <select value={c.units} onChange={e=>setCpt(i,"units",Number(e.target.value))} style={{width:80}}>
+          <option value={1}>1 unit</option>
+          <option value={2}>2 units</option>
+        </select>
+        {form.cptCodes.length>1 && <Btn variant="danger" onClick={()=>removeCpt(i)} style={{padding:"4px 8px"}}>×</Btn>}
+      </div>
+    ))}
+    <Btn variant="ghost" onClick={addCpt} style={{marginBottom:12, fontSize:12}}>+ Add CPT Code</Btn>
+    <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:12}}>
+      <input type="checkbox" id="copay" checked={form.coPayCollected} onChange={e=>setForm(f=>({...f,coPayCollected:e.target.checked}))} style={{width:"auto"}}/>
+      <label htmlFor="copay" style={{margin:0, fontSize:13, color:T.text}}>Co-pay collected</label>
+    </div>
+    <Field label="Notes">
+      <textarea rows={2} value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Visit notes…"/>
+    </Field>
+    <div style={{display:"flex", gap:8, justifyContent:"flex-end"}}>
+      <Btn variant="ghost" onClick={()=>setShowForm(false)}>Cancel</Btn>
+      <Btn onClick={save}>{editing?"Save Changes":"Add Appointment"}</Btn>
+    </div>
+  </Modal>
+</div>
+```
+
+);
+}
+
+// ─── TAB: SOAP NOTES ─────────────────────────────────────────────────────────
+function SOAPTab({patients}) {
+const [dx, setDx] = useState(Object.keys(SOAP_TEMPLATES)[0]);
+const [vt, setVt] = useState(“Follow-Up”);
+const [text, setText] = useState(””);
+const [patientId, setPatientId] = useState(””);
+const [copied, setCopied] = useState(false);
+
+const load = () => {
+const tmpl = SOAP_TEMPLATES[dx]?.[vt] || “”;
+setText(tmpl);
+};
+const copy = () => {
+navigator.clipboard.writeText(text).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);});
+};
+
+return (
+<div>
+<div style={{fontSize:18, fontWeight:700, marginBottom:16}}>SOAP Notes</div>
+<div style={{...styles.card}}>
+<div style={{display:“flex”, gap:12, flexWrap:“wrap”, marginBottom:14}}>
+<Field label="Diagnosis Template">
+<select value={dx} onChange={e=>setDx(e.target.value)} style={{width:220}}>
+{Object.keys(SOAP_TEMPLATES).map(k=><option key={k}>{k}</option>)}
+</select>
+</Field>
+<Field label="Visit Type">
+<select value={vt} onChange={e=>setVt(e.target.value)} style={{width:160}}>
+{VISIT_TYPES.map(t=><option key={t}>{t}</option>)}
+</select>
+</Field>
+<Field label="Patient (optional)">
+<select value={patientId} onChange={e=>setPatientId(e.target.value)} style={{width:180}}>
+<option value="">— None —</option>
+{patients.map(p=><option key={p.id} value={p.id}>{p.initials} #{p.chartNum}</option>)}
+</select>
+</Field>
+<div style={{display:“flex”, gap:8, alignItems:“flex-end”, paddingBottom:1}}>
+<Btn onClick={load}>Load Template</Btn>
+<Btn variant="ghost" onClick={copy}>{copied?“✓ Copied!”:“Copy to Clipboard”}</Btn>
+</div>
+</div>
+<Tip>Fill in all [bracket] fields before copying. Do not include PHI. Paste into WebPT note field.</Tip>
+<textarea
+rows={22}
+value={text}
+onChange={e=>setText(e.target.value)}
+style={{width:“100%”, fontSize:13, lineHeight:1.7, fontFamily:”‘Courier New’, monospace”, resize:“vertical”}}
+placeholder=“Click ‘Load Template’ to begin…”
+/>
+<div style={{marginTop:10, display:“flex”, justifyContent:“space-between”, alignItems:“center”}}>
+<span style={{fontSize:12, color:T.textMuted}}>Template: {dx} — {vt}</span>
+<Btn onClick={copy}>{copied?“✓ Copied!”:“Copy to Clipboard”}</Btn>
+</div>
+</div>
+</div>
+);
+}
+
+// ─── TAB: RE-AUTH TRACKER ────────────────────────────────────────────────────
+function ReAuthTab({patients, auths, reAuths, setReAuths}) {
+const empty = {id:””, patientId:””, authId:””, submitDate:””, status:“Pending”, notes:””};
+const [form, setForm] = useState({…empty});
+const [showForm, setShowForm] = useState(false);
+const getPatient = id => patients.find(p=>p.id===id);
+const getAuth = id => auths.find(a=>a.id===id);
+
+const save = () => {
+if (!form.patientId) return alert(“Patient required.”);
+setReAuths(r=>[…r,{…form,id:uid()}]);
+setForm({…empty}); setShowForm(false);
+};
+const setStatus = (id, status) => setReAuths(r=>r.map(x=>x.id===id?{…x,status}:x));
+const del = (id) => { if(confirm(“Delete?”)) setReAuths(r=>r.filter(x=>x.id!==id)); };
+
+const statusColor = s => s===“Approved”?T.green:s===“Denied”?T.red:T.yellow;
+
+return (
+<div>
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“center”, marginBottom:16}}>
+<span style={{fontSize:18, fontWeight:700}}>Re-Auth Tracker</span>
+<Btn onClick={()=>{setForm({…empty});setShowForm(true)}}>+ Add Re-Auth</Btn>
+</div>
+{reAuths.map(r => {
+const pt = getPatient(r.patientId);
+const auth = getAuth(r.authId);
+return (
+<div key={r.id} style={styles.card}>
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“flex-start”}}>
+<div>
+<span style={{fontWeight:700}}>{pt?`${pt.initials} #${pt.chartNum}`:”—”}</span>
+{auth && <span style={{marginLeft:8, fontSize:12, color:T.textMuted}}>Auth: {auth.authNum}</span>}
+<span style={{marginLeft:8}}><Badge color={statusColor(r.status)}>{r.status}</Badge></span>
+</div>
+<div style={{display:“flex”, gap:6}}>
+<Btn variant=“ghost” onClick={()=>setStatus(r.id,“Pending”)} style={{fontSize:11}}>Pending</Btn>
+<Btn variant=“ghost” onClick={()=>setStatus(r.id,“Approved”)} style={{fontSize:11,color:T.green}}>Approve</Btn>
+<Btn variant=“ghost” onClick={()=>setStatus(r.id,“Denied”)} style={{fontSize:11,color:T.red}}>Deny</Btn>
+<Btn variant=“danger” onClick={()=>del(r.id)}>Del</Btn>
+</div>
+</div>
+<div style={{marginTop:6, fontSize:12, color:T.textMuted}}>
+Submitted: <b style={{color:T.text}}>{fmt(r.submitDate)}</b>
+{r.notes && <span style={{marginLeft:12}}>{r.notes}</span>}
+</div>
+</div>
+);
+})}
+{reAuths.length===0 && <div style={{color:T.textMuted, textAlign:“center”, padding:40}}>No re-auth requests yet.</div>}
+
+```
+  <Modal show={showForm} onClose={()=>setShowForm(false)} title="Add Re-Auth Request">
+    <div style={styles.grid(2)}>
+      <Field label="Patient *">
+        <select value={form.patientId} onChange={e=>setForm(f=>({...f,patientId:e.target.value,authId:""}))}>
+          <option value="">— Select —</option>
+          {patients.map(p=><option key={p.id} value={p.id}>{p.initials} #{p.chartNum}</option>)}
+        </select>
+      </Field>
+      <Field label="Associated Auth">
+        <select value={form.authId} onChange={e=>setForm(f=>({...f,authId:e.target.value}))}>
+          <option value="">— None —</option>
+          {auths.filter(a=>a.patientId===form.patientId).map(a=><option key={a.id} value={a.id}>{a.authNum}</option>)}
+        </select>
+      </Field>
+      <Field label="Submit Date"><input type="date" value={form.submitDate} onChange={e=>setForm(f=>({...f,submitDate:e.target.value}))}/></Field>
+      <Field label="Status">
+        <select value={form.status} onChange={e=>setForm(f=>({...f,status:e.target.value}))}>
+          {["Pending","Approved","Denied"].map(s=><option key={s}>{s}</option>)}
+        </select>
+      </Field>
+    </div>
+    <Field label="Notes"><textarea rows={2} value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Any notes…"/></Field>
+    <div style={{display:"flex", gap:8, justifyContent:"flex-end"}}>
+      <Btn variant="ghost" onClick={()=>setShowForm(false)}>Cancel</Btn>
+      <Btn onClick={save}>Add</Btn>
+    </div>
+  </Modal>
+</div>
+```
+
+);
+}
+
+// ─── TAB: WAITLIST ───────────────────────────────────────────────────────────
+function WaitlistTab({waitlist, setWaitlist}) {
+const empty = {id:””, initials:””, insurance:””, referralDate:””, priority:“Normal”, notes:””};
+const [form, setForm] = useState({…empty});
+const [showForm, setShowForm] = useState(false);
+
+const save = () => {
+if (!form.initials) return alert(“Initials required.”);
+setWaitlist(w=>[…w,{…form,id:uid(),added:today()}]);
+setForm({…empty}); setShowForm(false);
+};
+const del = (id) => { if(confirm(“Remove from waitlist?”)) setWaitlist(w=>w.filter(x=>x.id!==id)); };
+const priorityColor = p => p===“Urgent”?T.red:p===“High”?T.orange:T.blue;
+
+return (
+<div>
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“center”, marginBottom:16}}>
+<span style={{fontSize:18, fontWeight:700}}>Waitlist</span>
+<Btn onClick={()=>{setForm({…empty});setShowForm(true)}}>+ Add Patient</Btn>
+</div>
+{waitlist.sort((a,b)=>[“Urgent”,“High”,“Normal”].indexOf(a.priority)-[“Urgent”,“High”,“Normal”].indexOf(b.priority)).map(w => (
+<div key={w.id} style={styles.card}>
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“flex-start”}}>
+<div>
+<span style={{fontWeight:700}}>{w.initials}</span>
+<span style={{marginLeft:8}}><Badge color={priorityColor(w.priority)}>{w.priority}</Badge></span>
+{w.insurance && <span style={{marginLeft:8, fontSize:12, color:T.textMuted}}>{w.insurance}</span>}
+</div>
+<Btn variant=“danger” onClick={()=>del(w.id)}>Remove</Btn>
+</div>
+<div style={{marginTop:6, fontSize:12, color:T.textMuted}}>
+Referral: <b style={{color:T.text}}>{fmt(w.referralDate)}</b>
+{” · “}Added: <b style={{color:T.text}}>{fmt(w.added)}</b>
+{w.notes && <span style={{marginLeft:12, fontStyle:“italic”}}>{w.notes}</span>}
+</div>
+</div>
+))}
+{waitlist.length===0 && <div style={{color:T.textMuted, textAlign:“center”, padding:40}}>Waitlist is empty.</div>}
+
+```
+  <Modal show={showForm} onClose={()=>setShowForm(false)} title="Add to Waitlist">
+    <Tip>Use initials only — no full names.</Tip>
+    <div style={styles.grid(2)}>
+      <Field label="Initials *"><input value={form.initials} onChange={e=>setForm(f=>({...f,initials:e.target.value}))} placeholder="J.D."/></Field>
+      <Field label="Priority">
+        <select value={form.priority} onChange={e=>setForm(f=>({...f,priority:e.target.value}))}>
+          {["Urgent","High","Normal"].map(p=><option key={p}>{p}</option>)}
+        </select>
+      </Field>
+      <Field label="Insurance"><input value={form.insurance} onChange={e=>setForm(f=>({...f,insurance:e.target.value}))} placeholder="Insurer"/></Field>
+      <Field label="Referral Date"><input type="date" value={form.referralDate} onChange={e=>setForm(f=>({...f,referralDate:e.target.value}))}/></Field>
+    </div>
+    <Field label="Notes"><textarea rows={2} value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Notes…"/></Field>
+    <div style={{display:"flex", gap:8, justifyContent:"flex-end"}}>
+      <Btn variant="ghost" onClick={()=>setShowForm(false)}>Cancel</Btn>
+      <Btn onClick={save}>Add to Waitlist</Btn>
+    </div>
+  </Modal>
+</div>
+```
+
+);
+}
+
+// ─── TAB: REMINDERS ──────────────────────────────────────────────────────────
+function RemindersTab({reminders, setReminders}) {
+const CATS = [“Auth/Insurance”,“Scheduling”,“Clinical”,“Admin”,“Other”];
+const empty = {id:””, category:“Admin”, text:””, dueDate:””, done:false};
+const [form, setForm] = useState({…empty});
+const [showForm, setShowForm] = useState(false);
+const [filterCat, setFilterCat] = useState(“All”);
+
+const save = () => {
+if (!form.text) return alert(“Reminder text required.”);
+setReminders(r=>[…r,{…form,id:uid()}]);
+setForm({…empty}); setShowForm(false);
+};
+const toggle = (id) => setReminders(r=>r.map(x=>x.id===id?{…x,done:!x.done}:x));
+const del = (id) => setReminders(r=>r.filter(x=>x.id!==id));
+
+const filtered = reminders.filter(r=>filterCat===“All”||r.category===filterCat)
+.sort((a,b)=>a.done-b.done||(a.dueDate>b.dueDate?1:-1));
+
+const isOverdue = r => !r.done && r.dueDate && r.dueDate < today();
+
+return (
+<div>
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“center”, marginBottom:16}}>
+<span style={{fontSize:18, fontWeight:700}}>Reminders</span>
+<Btn onClick={()=>{setForm({…empty});setShowForm(true)}}>+ Add Reminder</Btn>
+</div>
+<div style={{display:“flex”, gap:6, flexWrap:“wrap”, marginBottom:14}}>
+{[“All”,…CATS].map(c=>(
+<div key={c} onClick={()=>setFilterCat(c)} style={{
+padding:“4px 12px”, borderRadius:20, fontSize:12, cursor:“pointer”,
+background:filterCat===c?`${T.blue}33`:T.bgHover,
+border:`1px solid ${filterCat===c?T.blue:T.border}`,
+color:filterCat===c?T.blue:T.textMuted
+}}>{c}</div>
+))}
+</div>
+{filtered.map(r => (
+<div key={r.id} style={{…styles.card, opacity:r.done?.6:1, borderColor:isOverdue(r)?T.red+44:T.border}}>
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“flex-start”}}>
+<div style={{display:“flex”, gap:10, alignItems:“flex-start”}}>
+<input type=“checkbox” checked={r.done} onChange={()=>toggle(r.id)} style={{width:“auto”,marginTop:3}}/>
+<div>
+<span style={{textDecoration:r.done?“line-through”:“none”, color:r.done?T.textMuted:T.text}}>{r.text}</span>
+<div style={{display:“flex”, gap:8, marginTop:4}}>
+<Badge color={T.blue}>{r.category}</Badge>
+{r.dueDate && <span style={{fontSize:11, color:isOverdue(r)?T.red:T.textMuted}}>Due: {fmt(r.dueDate)}</span>}
+{isOverdue(r) && <span style={{fontSize:11, color:T.red, fontWeight:700}}>OVERDUE</span>}
+</div>
+</div>
+</div>
+<Btn variant=“danger” onClick={()=>del(r.id)}>Del</Btn>
+</div>
+</div>
+))}
+{filtered.length===0 && <div style={{color:T.textMuted, textAlign:“center”, padding:40}}>No reminders.</div>}
+
+```
+  <Modal show={showForm} onClose={()=>setShowForm(false)} title="Add Reminder">
+    <Field label="Reminder *"><textarea rows={2} value={form.text} onChange={e=>setForm(f=>({...f,text:e.target.value}))} placeholder="What needs to be done?"/></Field>
+    <div style={styles.grid(2)}>
+      <Field label="Category">
+        <select value={form.category} onChange={e=>setForm(f=>({...f,category:e.target.value}))}>
+          {CATS.map(c=><option key={c}>{c}</option>)}
+        </select>
+      </Field>
+      <Field label="Due Date"><input type="date" value={form.dueDate} onChange={e=>setForm(f=>({...f,dueDate:e.target.value}))}/></Field>
+    </div>
+    <div style={{display:"flex", gap:8, justifyContent:"flex-end"}}>
+      <Btn variant="ghost" onClick={()=>setShowForm(false)}>Cancel</Btn>
+      <Btn onClick={save}>Add Reminder</Btn>
+    </div>
+  </Modal>
+</div>
+```
+
+);
+}
+
+// ─── TAB: FOLLOW-UP TRACKER ───────────────────────────────────────────────────
+function FollowUpTab({patients, appointments, followUps, setFollowUps}) {
+const [showForm, setShowForm] = useState(false);
+const empty = {id:””, patientId:””, apptId:””, reason:“No-Show”, date:today(), resolved:false, notes:””};
+const [form, setForm] = useState({…empty});
+
+const save = () => {
+if (!form.patientId) return alert(“Patient required.”);
+setFollowUps(f=>[…f,{…form,id:uid()}]);
+setForm({…empty}); setShowForm(false);
+};
+const resolve = (id) => setFollowUps(f=>f.map(x=>x.id===id?{…x,resolved:true}:x));
+const del = (id) => setFollowUps(f=>f.filter(x=>x.id!==id));
+const getPatient = id => patients.find(p=>p.id===id);
+
+const open = followUps.filter(f=>!f.resolved);
+const closed = followUps.filter(f=>f.resolved);
+
+return (
+<div>
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“center”, marginBottom:16}}>
+<span style={{fontSize:18, fontWeight:700}}>Follow-Up Tracker</span>
+<Btn onClick={()=>{setForm({…empty});setShowForm(true)}}>+ Log Follow-Up</Btn>
+</div>
+<SectionTitle>Open ({open.length})</SectionTitle>
+{open.map(f => {
+const pt = getPatient(f.patientId);
+return (
+<div key={f.id} style={styles.card}>
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“flex-start”}}>
+<div>
+<span style={{fontWeight:700}}>{pt?`${pt.initials} #${pt.chartNum}`:”—”}</span>
+<span style={{marginLeft:8}}><Badge color={f.reason===“No-Show”?T.red:T.orange}>{f.reason}</Badge></span>
+<span style={{marginLeft:8, fontSize:12, color:T.textMuted}}>{fmt(f.date)}</span>
+</div>
+<div style={{display:“flex”, gap:6}}>
+<Btn variant=“ghost” onClick={()=>resolve(f.id)} style={{color:T.green, fontSize:12}}>✓ Resolve</Btn>
+<Btn variant=“danger” onClick={()=>del(f.id)}>Del</Btn>
+</div>
+</div>
+{f.notes && <div style={{marginTop:6, fontSize:12, color:T.textMuted}}>{f.notes}</div>}
+</div>
+);
+})}
+{open.length===0 && <div style={{color:T.textMuted, padding:“12px 0 20px”, fontSize:13}}>No open follow-ups. 🎉</div>}
+{closed.length>0 && <>
+<Divider/>
+<SectionTitle>Resolved ({closed.length})</SectionTitle>
+{closed.map(f => {
+const pt = getPatient(f.patientId);
+return (
+<div key={f.id} style={{…styles.card, opacity:.5}}>
+<span style={{fontWeight:600}}>{pt?`${pt.initials} #${pt.chartNum}`:”—”}</span>
+<span style={{marginLeft:8}}><Badge color={T.green}>Resolved</Badge></span>
+<span style={{marginLeft:8, fontSize:12, color:T.textMuted}}>{f.reason} · {fmt(f.date)}</span>
+<Btn variant=“danger” onClick={()=>del(f.id)} style={{marginLeft:12, padding:“3px 8px”, fontSize:11}}>Del</Btn>
+</div>
+);
+})}
+</>}
+
+```
+  <Modal show={showForm} onClose={()=>setShowForm(false)} title="Log Follow-Up">
+    <div style={styles.grid(2)}>
+      <Field label="Patient *">
+        <select value={form.patientId} onChange={e=>setForm(f=>({...f,patientId:e.target.value}))}>
+          <option value="">— Select —</option>
+          {patients.map(p=><option key={p.id} value={p.id}>{p.initials} #{p.chartNum}</option>)}
+        </select>
+      </Field>
+      <Field label="Reason">
+        <select value={form.reason} onChange={e=>setForm(f=>({...f,reason:e.target.value}))}>
+          {["No-Show","Cancellation","Needs Reschedule","Other"].map(r=><option key={r}>{r}</option>)}
+        </select>
+      </Field>
+      <Field label="Date"><input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/></Field>
+    </div>
+    <Field label="Notes"><textarea rows={2} value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Notes…"/></Field>
+    <div style={{display:"flex", gap:8, justifyContent:"flex-end"}}>
+      <Btn variant="ghost" onClick={()=>setShowForm(false)}>Cancel</Btn>
+      <Btn onClick={save}>Log</Btn>
+    </div>
+  </Modal>
+</div>
+```
+
+);
+}
+
+// ─── TAB: PLAN OF CARE ───────────────────────────────────────────────────────
+function PlanOfCareTab({patients, pocs, setPocs}) {
+const empty = {id:””, patientId:””, evalDate:””, certEnd:””, dischargeGoal:””, status:“Active”, notes:””};
+const [form, setForm] = useState({…empty});
+const [editing, setEditing] = useState(null);
+const [showForm, setShowForm] = useState(false);
+
+const save = () => {
+if (!form.patientId || !form.evalDate) return alert(“Patient and eval date required.”);
+if (editing) setPocs(p=>p.map(x=>x.id===editing?{…form,id:editing}:x));
+else setPocs(p=>[…p,{…form,id:uid()}]);
+setForm({…empty}); setEditing(null); setShowForm(false);
+};
+const edit = (p) => { setForm({…p}); setEditing(p.id); setShowForm(true); };
+const del = (id) => { if(confirm(“Delete POC?”)) setPocs(p=>p.filter(x=>x.id!==id)); };
+const getPatient = id => patients.find(p=>p.id===id);
+const recertDue = certEnd => certEnd ? addDays(certEnd, -7) : null;
+const statusColor = s => s===“Active”?T.green:s===“Re-Cert Pending”?T.yellow:T.textDim;
+
+return (
+<div>
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“center”, marginBottom:16}}>
+<span style={{fontSize:18, fontWeight:700}}>Plan of Care</span>
+<Btn onClick={()=>{setForm({…empty});setEditing(null);setShowForm(true)}}>+ Add POC</Btn>
+</div>
+{pocs.map(p => {
+const pt = getPatient(p.patientId);
+const rcd = recertDue(p.certEnd);
+const recertSoon = rcd && daysBetween(today(), rcd) <= 14 && p.status===“Active”;
+return (
+<div key={p.id} style={styles.card}>
+{recertSoon && <Alert color={T.yellow}>⏰ Re-cert due {fmt(rcd)} — {daysBetween(today(),rcd)}d away</Alert>}
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“flex-start”}}>
+<div>
+<span style={{fontWeight:700}}>{pt?`${pt.initials} #${pt.chartNum}`:”—”}</span>
+<span style={{marginLeft:8}}><Badge color={statusColor(p.status)}>{p.status}</Badge></span>
+</div>
+<div style={{display:“flex”, gap:6}}>
+<Btn variant=“ghost” onClick={()=>edit(p)}>Edit</Btn>
+<Btn variant=“danger” onClick={()=>del(p.id)}>Del</Btn>
+</div>
+</div>
+<div style={{marginTop:8, display:“flex”, flexWrap:“wrap”, gap:“4px 20px”, fontSize:12, color:T.textMuted}}>
+<span>Eval: <b style={{color:T.text}}>{fmt(p.evalDate)}</b></span>
+<span>Cert End: <b style={{color:T.text}}>{fmt(p.certEnd)}</b></span>
+<span>Re-cert Due: <b style={{color:recertSoon?T.yellow:T.text}}>{rcd?fmt(rcd):”—”}</b></span>
+<span>D/C Goal: <b style={{color:T.text}}>{fmt(p.dischargeGoal)}</b></span>
+</div>
+{p.notes && <div style={{marginTop:6, fontSize:12, color:T.textMuted}}>{p.notes}</div>}
+</div>
+);
+})}
+{pocs.length===0 && <div style={{color:T.textMuted, textAlign:“center”, padding:40}}>No plans of care yet.</div>}
+
+```
+  <Modal show={showForm} onClose={()=>setShowForm(false)} title={editing?"Edit POC":"Add Plan of Care"}>
+    <div style={styles.grid(2)}>
+      <Field label="Patient *">
+        <select value={form.patientId} onChange={e=>setForm(f=>({...f,patientId:e.target.value}))}>
+          <option value="">— Select —</option>
+          {patients.map(p=><option key={p.id} value={p.id}>{p.initials} #{p.chartNum}</option>)}
+        </select>
+      </Field>
+      <Field label="Status">
+        <select value={form.status} onChange={e=>setForm(f=>({...f,status:e.target.value}))}>
+          {["Active","Re-Cert Pending","Discharged"].map(s=><option key={s}>{s}</option>)}
+        </select>
+      </Field>
+      <Field label="Eval Date *"><input type="date" value={form.evalDate} onChange={e=>setForm(f=>({...f,evalDate:e.target.value}))}/></Field>
+      <Field label="Cert Period End"><input type="date" value={form.certEnd} onChange={e=>setForm(f=>({...f,certEnd:e.target.value}))}/></Field>
+      <Field label="Discharge Goal Date"><input type="date" value={form.dischargeGoal} onChange={e=>setForm(f=>({...f,dischargeGoal:e.target.value}))}/></Field>
+      {form.certEnd && <Field label="Re-cert Due (auto)"><input value={addDays(form.certEnd,-7)} disabled style={{color:T.yellow,background:T.bg}}/></Field>}
+    </div>
+    <Field label="Notes"><textarea rows={2} value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Notes…"/></Field>
+    <div style={{display:"flex", gap:8, justifyContent:"flex-end"}}>
+      <Btn variant="ghost" onClick={()=>setShowForm(false)}>Cancel</Btn>
+      <Btn onClick={save}>{editing?"Save":"Add POC"}</Btn>
+    </div>
+  </Modal>
+</div>
+```
+
+);
+}
+
+// ─── TAB: INSURANCE VERIFICATION ─────────────────────────────────────────────
+function InsuranceVerifTab({patients, insurVerifs, setInsurVerifs}) {
+const empty = {
+id:””, patientId:””, checklist:{}, deductible:””, copay:””,
+oop:””, oopRemaining:””, visitsAllowed:””, notes:””, date:today()
+};
+const [form, setForm] = useState({…empty});
+const [editing, setEditing] = useState(null);
+const [showForm, setShowForm] = useState(false);
+
+const save = () => {
+if (!form.patientId) return alert(“Patient required.”);
+if (editing) setInsurVerifs(v=>v.map(x=>x.id===editing?{…form,id:editing}:x));
+else setInsurVerifs(v=>[…v,{…form,id:uid()}]);
+setForm({…empty}); setEditing(null); setShowForm(false);
+};
+const edit = (v) => { setForm({…v,checklist:{…v.checklist}}); setEditing(v.id); setShowForm(true); };
+const del = (id) => { if(confirm(“Delete?”)) setInsurVerifs(v=>v.filter(x=>x.id!==id)); };
+const toggleCheck = (item) => setForm(f=>({…f,checklist:{…f.checklist,[item]:!f.checklist[item]}}));
+const getPatient = id => patients.find(p=>p.id===id);
+
+const allItems = Object.values(INSUR_CHECK).flat();
+
+return (
+<div>
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“center”, marginBottom:16}}>
+<span style={{fontSize:18, fontWeight:700}}>Insurance Verification</span>
+<Btn onClick={()=>{setForm({…empty});setEditing(null);setShowForm(true)}}>+ New Verification</Btn>
+</div>
+{insurVerifs.map(v => {
+const pt = getPatient(v.patientId);
+const total = allItems.length;
+const done = allItems.filter(i=>v.checklist[i]).length;
+return (
+<div key={v.id} style={styles.card}>
+<div style={{display:“flex”, justifyContent:“space-between”, alignItems:“flex-start”}}>
+<div>
+<span style={{fontWeight:700}}>{pt?`${pt.initials} #${pt.chartNum}`:”—”}</span>
+<span style={{marginLeft:8, fontSize:12, color:T.textMuted}}>Verified: {fmt(v.date)}</span>
+<span style={{marginLeft:8, fontSize:12, color:done===total?T.green:T.yellow}}>{done}/{total} items</span>
+</div>
+<div style={{display:“flex”, gap:6}}>
+<Btn variant=“ghost” onClick={()=>edit(v)}>View / Edit</Btn>
+<Btn variant=“danger” onClick={()=>del(v.id)}>Del</Btn>
+</div>
+</div>
+<div style={{marginTop:8}}>
+<Progress value={done} max={total} color={done===total?T.green:T.yellow}/>
+</div>
+<div style={{marginTop:8, display:“flex”, flexWrap:“wrap”, gap:“4px 16px”, fontSize:12, color:T.textMuted}}>
+{v.copay && <span>Co-pay: <b style={{color:T.text}}>${v.copay}</b></span>}
+{v.deductible && <span>Deductible: <b style={{color:T.text}}>${v.deductible}</b></span>}
+{v.oop && <span>OOP Max: <b style={{color:T.text}}>${v.oop}</b></span>}
+{v.oopRemaining && <span>OOP Remaining: <b style={{color:T.text}}>${v.oopRemaining}</b></span>}
+{v.visitsAllowed && <span>Visits/yr: <b style={{color:T.text}}>{v.visitsAllowed}</b></span>}
+</div>
+</div>
+);
+})}
+{insurVerifs.length===0 && <div style={{color:T.textMuted, textAlign:“center”, padding:40}}>No verifications yet.</div>}
+
+```
+  <Modal show={showForm} onClose={()=>setShowForm(false)} title={editing?"Edit Verification":"New Insurance Verification"}>
+    <div style={styles.grid(2)}>
+      <Field label="Patient *">
+        <select value={form.patientId} onChange={e=>setForm(f=>({...f,patientId:e.target.value}))}>
+          <option value="">— Select —</option>
+          {patients.map(p=><option key={p.id} value={p.id}>{p.initials} #{p.chartNum}</option>)}
+        </select>
+      </Field>
+      <Field label="Verification Date"><input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/></Field>
+    </div>
+    {Object.entries(INSUR_CHECK).map(([section, items]) => (
+      <div key={section}>
+        <SectionTitle>{section}</SectionTitle>
+        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:"6px 16px", marginBottom:12}}>
+          {items.map(item => (
+            <label key={item} style={{display:"flex", alignItems:"center", gap:8, fontSize:12, color:form.checklist[item]?T.text:T.textMuted, cursor:"pointer"}}>
+              <input type="checkbox" checked={!!form.checklist[item]} onChange={()=>toggleCheck(item)} style={{width:"auto"}}/>
+              {item}
+            </label>
+          ))}
+        </div>
+      </div>
+    ))}
+    <SectionTitle>Financial Details</SectionTitle>
+    <div style={styles.grid(2)}>
+      <Field label="Deductible ($)"><input value={form.deductible} onChange={e=>setForm(f=>({...f,deductible:e.target.value}))} placeholder="0.00"/></Field>
+      <Field label="Co-pay ($)"><input value={form.copay} onChange={e=>setForm(f=>({...f,copay:e.target.value}))} placeholder="0.00"/></Field>
+      <Field label="OOP Max ($)"><input value={form.oop} onChange={e=>setForm(f=>({...f,oop:e.target.value}))} placeholder="0.00"/></Field>
+      <Field label="OOP Remaining ($)"><input value={form.oopRemaining} onChange={e=>setForm(f=>({...f,oopRemaining:e.target.value}))} placeholder="0.00"/></Field>
+      <Field label="Visits Allowed/Year"><input value={form.visitsAllowed} onChange={e=>setForm(f=>({...f,visitsAllowed:e.target.value}))} placeholder="e.g. 60"/></Field>
+    </div>
+    <Field label="Notes"><textarea rows={2} value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Notes…"/></Field>
+    <div style={{display:"flex", gap:8, justifyContent:"flex-end"}}>
+      <Btn variant="ghost" onClick={()=>setShowForm(false)}>Cancel</Btn>
+      <Btn onClick={save}>{editing?"Save":"Save Verification"}</Btn>
+    </div>
+  </Modal>
+</div>
+```
+
+);
+}
+
+// ─── TAB: PATIENT LOOKUP ──────────────────────────────────────────────────────
+function LookupTab({patients, auths, appointments, pocs}) {
+const [q, setQ] = useState(””);
+const match = patients.filter(p =>
+q && (p.initials.toLowerCase().includes(q.toLowerCase()) || p.chartNum.includes(q))
+);
+const getPatientData = (p) => ({
+auths: auths.filter(a=>a.patientId===p.id),
+appts: appointments.filter(a=>a.patientId===p.id).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,5),
+poc: pocs.find(c=>c.patientId===p.id)
+});
+
+return (
+<div>
+<div style={{fontSize:18, fontWeight:700, marginBottom:16}}>Patient Lookup</div>
+<input value={q} onChange={e=>setQ(e.target.value)} placeholder=“Search by initials or WebPT chart #…” style={{marginBottom:16, fontSize:14, padding:“10px 14px”}}/>
+{q && match.length===0 && <div style={{color:T.textMuted, padding:20}}>No patients found.</div>}
+{match.map(p => {
+const {auths:pAuths, appts, poc} = getPatientData(p);
+return (
+<div key={p.id} style={{…styles.card, borderColor:T.borderBright}}>
+<div style={{display:“flex”, gap:8, alignItems:“center”, marginBottom:12}}>
+<span style={{fontSize:17, fontWeight:700}}>{p.initials}</span>
+<span style={{fontSize:13, color:T.textMuted}}>#{p.chartNum}</span>
+<Badge>{p.caseType}</Badge>
+{p.coPay && <span style={{fontSize:12, color:T.textMuted}}>Co-pay: ${p.coPay}</span>}
+</div>
+{p.icd10 && <div style={{fontSize:12, color:T.textMuted, marginBottom:10}}>Dx: <b style={{color:T.text}}>{p.icd10===“Custom”?p.customDx:p.icd10}</b></div>}
+{p.goals.length>0 && <div style={{marginBottom:10, display:“flex”, flexWrap:“wrap”, gap:4}}>
+{p.goals.map(g=><span key={g} style={{…styles.tag, color:T.green}}>✓ {g}</span>)}
+</div>}
+{poc && (
+<div style={{…styles.card, background:T.bg, marginBottom:8}}>
+<SectionTitle>Plan of Care</SectionTitle>
+<div style={{display:“flex”, gap:16, fontSize:12, color:T.textMuted}}>
+<span>Status: <Badge color={poc.status===“Active”?T.green:T.yellow}>{poc.status}</Badge></span>
+<span>Eval: <b style={{color:T.text}}>{fmt(poc.evalDate)}</b></span>
+<span>Cert End: <b style={{color:T.text}}>{fmt(poc.certEnd)}</b></span>
+</div>
+</div>
+)}
+{pAuths.length>0 && (
+<div style={{…styles.card, background:T.bg, marginBottom:8}}>
+<SectionTitle>Authorizations</SectionTitle>
+{pAuths.map(a=>(
+<div key={a.id} style={{display:“flex”, justifyContent:“space-between”, fontSize:12, padding:“4px 0”, borderBottom:`1px solid ${T.border}`}}>
+<span>{a.authNum} — {a.insurance}</span>
+<span><b style={{color:T.text}}>{a.visitsUsed}/{a.visitsApproved}</b> visits · exp {fmt(a.endDate)}</span>
+</div>
+))}
+</div>
+)}
+{appts.length>0 && (
+<div style={{…styles.card, background:T.bg}}>
+<SectionTitle>Recent Appointments</SectionTitle>
+{appts.map(a=>(
+<div key={a.id} style={{display:“flex”, justifyContent:“space-between”, fontSize:12, padding:“4px 0”, borderBottom:`1px solid ${T.border}`}}>
+<span>{fmt(a.date)} {a.time} — {a.visitType}</span>
+<Badge color={a.attendance===“Attended”?T.green:a.attendance===“No-Show”?T.red:T.blue}>{a.attendance}</Badge>
+</div>
+))}
+</div>
+)}
+</div>
+);
+})}
+{!q && <div style={{color:T.textMuted, textAlign:“center”, padding:60, fontSize:13}}>Type initials or chart # to look up a patient.</div>}
+</div>
+);
+}
+
+// ─── TAB: REPORTS ────────────────────────────────────────────────────────────
+function ReportsTab({patients, auths, appointments}) {
+const [month, setMonth] = useState(today().slice(0,7));
+
+const monthAppts = appointments.filter(a=>a.date.startsWith(month));
+
+// Co-pay report
+const copayData = patients.map(p => {
+const pAppts = monthAppts.filter(a=>a.patientId===p.id && a.attendance===“Attended”);
+const collected = pAppts.filter(a=>a.coPayCollected).length;
+const outstanding = pAppts.filter(a=>!a.coPayCollected).length;
+const amt = Number(p.coPay)||0;
+return { p, collected, outstanding, collectedAmt: collected*amt, outstandingAmt: outstanding*amt };
+}).filter(r=>r.collected+r.outstanding>0);
+
+// Auth utilization
+const authData = auths.map(a => {
+const pt = patients.find(p=>p.id===a.patientId);
+const approved = Number(a.visitsApproved)||0;
+const used = Number(a.visitsUsed)||0;
+const pct = approved>0 ? Math.round((used/approved)*100) : 0;
+const weeks = a.startDate ? Math.max(1, daysBetween(a.startDate, today())/7) : 1;
+const rate = (used/weeks).toFixed(1);
+return { a, pt, approved, used, pct, rate };
+});
+
+return (
+<div>
+<div style={{fontSize:18, fontWeight:700, marginBottom:16}}>Reports</div>
+<div style={{display:“flex”, gap:8, alignItems:“center”, marginBottom:20}}>
+<label style={{margin:0}}>Month:</label>
+<input type=“month” value={month} onChange={e=>setMonth(e.target.value)} style={{width:160}}/>
+</div>
+
+```
+  <SectionTitle>Co-pay Collection — {month}</SectionTitle>
+  <div style={{...styles.card, marginBottom:20}}>
+    <table style={{width:"100%", borderCollapse:"collapse", fontSize:13}}>
+      <thead>
+        <tr style={{borderBottom:`1px solid ${T.border}`, color:T.textMuted, fontSize:11, textAlign:"left"}}>
+          <th style={{padding:"6px 8px"}}>Patient</th>
+          <th style={{padding:"6px 8px"}}>Co-pay</th>
+          <th style={{padding:"6px 8px"}}>Collected</th>
+          <th style={{padding:"6px 8px"}}>Outstanding</th>
+          <th style={{padding:"6px 8px"}}>Collected $</th>
+          <th style={{padding:"6px 8px"}}>Outstanding $</th>
+        </tr>
+      </thead>
+      <tbody>
+        {copayData.map(({p,collected,outstanding,collectedAmt,outstandingAmt})=>(
+          <tr key={p.id} style={{borderBottom:`1px solid ${T.border}`}}>
+            <td style={{padding:"6px 8px", fontWeight:600}}>{p.initials} #{p.chartNum}</td>
+            <td style={{padding:"6px 8px"}}>${p.coPay||0}</td>
+            <td style={{padding:"6px 8px", color:T.green}}>{collected}</td>
+            <td style={{padding:"6px 8px", color:outstanding>0?T.red:T.textMuted}}>{outstanding}</td>
+            <td style={{padding:"6px 8px", color:T.green}}>${collectedAmt.toFixed(2)}</td>
+            <td style={{padding:"6px 8px", color:outstanding>0?T.red:T.textMuted}}>${outstandingAmt.toFixed(2)}</td>
+          </tr>
+        ))}
+      </tbody>
+      <tfoot>
+        <tr style={{borderTop:`2px solid ${T.border}`, fontWeight:700}}>
+          <td colSpan={4} style={{padding:"8px 8px"}}>Total</td>
+          <td style={{padding:"8px 8px", color:T.green}}>${copayData.reduce((s,r)=>s+r.collectedAmt,0).toFixed(2)}</td>
+          <td style={{padding:"8px 8px", color:T.orange}}>${copayData.reduce((s,r)=>s+r.outstandingAmt,0).toFixed(2)}</td>
+        </tr>
+      </tfoot>
+    </table>
+    {copayData.length===0 && <div style={{color:T.textMuted, textAlign:"center", padding:20}}>No attended appointments this month.</div>}
+  </div>
+
+  <SectionTitle>Auth Utilization</SectionTitle>
+  <div style={styles.card}>
+    <table style={{width:"100%", borderCollapse:"collapse", fontSize:13}}>
+      <thead>
+        <tr style={{borderBottom:`1px solid ${T.border}`, color:T.textMuted, fontSize:11, textAlign:"left"}}>
+          <th style={{padding:"6px 8px"}}>Patient</th>
+          <th style={{padding:"6px 8px"}}>Auth #</th>
+          <th style={{padding:"6px 8px"}}>Insurance</th>
+          <th style={{padding:"6px 8px"}}>Used/Approved</th>
+          <th style={{padding:"6px 8px"}}>% Used</th>
+          <th style={{padding:"6px 8px"}}>Visits/Wk</th>
+          <th style={{padding:"6px 8px"}}>Expires</th>
+        </tr>
+      </thead>
+      <tbody>
+        {authData.map(({a,pt,approved,used,pct,rate})=>(
+          <tr key={a.id} style={{borderBottom:`1px solid ${T.border}`}}>
+            <td style={{padding:"6px 8px", fontWeight:600}}>{pt?`${pt.initials} #${pt.chartNum}`:"—"}</td>
+            <td style={{padding:"6px 8px"}}>{a.authNum}</td>
+            <td style={{padding:"6px 8px", color:T.textMuted}}>{a.insurance}</td>
+            <td style={{padding:"6px 8px"}}>{used}/{approved}</td>
+            <td style={{padding:"6px 8px"}}>
+              <div style={{display:"flex", alignItems:"center", gap:6}}>
+                <div style={{width:60, height:5, background:T.border, borderRadius:3}}>
+                  <div style={{width:`${pct}%`, height:"100%", background:pct>=90?T.red:pct>=70?T.yellow:T.green, borderRadius:3}}/>
+                </div>
+                <span style={{color:pct>=90?T.red:pct>=70?T.yellow:T.green, fontWeight:600}}>{pct}%</span>
+              </div>
+            </td>
+            <td style={{padding:"6px 8px", color:T.textMuted}}>{rate}</td>
+            <td style={{padding:"6px 8px", fontSize:11, color:T.textMuted}}>{fmt(a.endDate)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+    {authData.length===0 && <div style={{color:T.textMuted, textAlign:"center", padding:20}}>No authorizations yet.</div>}
+  </div>
+</div>
+```
+
+);
+}
+
+// ─── TAB: MONTHLY SUMMARY ────────────────────────────────────────────────────
+function SummaryTab({patients, appointments}) {
+const [month, setMonth] = useState(today().slice(0,7));
+const monthAppts = appointments.filter(a=>a.date.startsWith(month));
+
+const data = patients.map(p => {
+const pa = monthAppts.filter(a=>a.patientId===p.id);
+return {
+p,
+total: pa.length,
+attended: pa.filter(a=>a.attendance===“Attended”).length,
+cancelled: pa.filter(a=>a.attendance===“Cancelled”).length,
+noShow: pa.filter(a=>a.attendance===“No-Show”).length,
+units: pa.filter(a=>a.attendance===“Attended”).reduce((s,a)=>(a.cptCodes||[]).reduce((su,c)=>su+c.units,s),0)
+};
+}).filter(r=>r.total>0);
+
+return (
+<div>
+<div style={{fontSize:18, fontWeight:700, marginBottom:16}}>Monthly Summary</div>
+<div style={{display:“flex”, gap:8, alignItems:“center”, marginBottom:20}}>
+<label style={{margin:0}}>Month:</label>
+<input type=“month” value={month} onChange={e=>setMonth(e.target.value)} style={{width:160}}/>
+</div>
+<div style={{display:“grid”, gridTemplateColumns:“repeat(4,1fr)”, gap:12, marginBottom:20}}>
+{[
+{label:“Total Appointments”, val:monthAppts.length, color:T.blue},
+{label:“Attended”, val:monthAppts.filter(a=>a.attendance===“Attended”).length, color:T.green},
+{label:“Cancellations”, val:monthAppts.filter(a=>a.attendance===“Cancelled”).length, color:T.orange},
+{label:“No-Shows”, val:monthAppts.filter(a=>a.attendance===“No-Show”).length, color:T.red},
+].map(s=>(
+<div key={s.label} style={styles.statCard}>
+<span style={{fontSize:28, fontWeight:700, color:s.color}}>{s.val}</span>
+<span style={{fontSize:12, color:T.textMuted}}>{s.label}</span>
+</div>
+))}
+</div>
+<div style={styles.card}>
+<table style={{width:“100%”, borderCollapse:“collapse”, fontSize:13}}>
+<thead>
+<tr style={{borderBottom:`1px solid ${T.border}`, color:T.textMuted, fontSize:11, textAlign:“left”}}>
+<th style={{padding:“6px 8px”}}>Patient</th>
+<th style={{padding:“6px 8px”}}>Total</th>
+<th style={{padding:“6px 8px”, color:T.green}}>Attended</th>
+<th style={{padding:“6px 8px”, color:T.orange}}>Cancelled</th>
+<th style={{padding:“6px 8px”, color:T.red}}>No-Show</th>
+<th style={{padding:“6px 8px”}}>Units Billed</th>
+</tr>
+</thead>
+<tbody>
+{data.map(({p,total,attended,cancelled,noShow,units})=>(
+<tr key={p.id} style={{borderBottom:`1px solid ${T.border}`}}>
+<td style={{padding:“6px 8px”, fontWeight:600}}>{p.initials} #{p.chartNum}</td>
+<td style={{padding:“6px 8px”}}>{total}</td>
+<td style={{padding:“6px 8px”, color:T.green}}>{attended}</td>
+<td style={{padding:“6px 8px”, color:T.orange}}>{cancelled}</td>
+<td style={{padding:“6px 8px”, color:T.red}}>{noShow}</td>
+<td style={{padding:“6px 8px”, fontWeight:600, color:T.blue}}>{units}</td>
+</tr>
+))}
+</tbody>
+</table>
+{data.length===0 && <div style={{color:T.textMuted, textAlign:“center”, padding:20}}>No appointments this month.</div>}
+</div>
+</div>
+);
+}
+
+// ─── TAB: DASHBOARD ───────────────────────────────────────────────────────────
+function DashboardTab({patients, auths, appointments, pocs, followUps, reminders}) {
+const todayStr = today();
+const todayAppts = appointments.filter(a=>a.date===todayStr);
+
+// Expiring auths (within 7 days)
+const expiringAuths = auths.filter(a => {
+if (!a.endDate) return false;
+const d = daysBetween(todayStr, a.endDate);
+return d >= 0 && d <= 7;
+});
+
+// Low visits (≤2 remaining)
+const lowVisits = auths.filter(a => (Number(a.visitsApproved)||0)-(Number(a.visitsUsed)||0) <= 2);
+
+// Re-cert due (within 14 days)
+const recertDue = pocs.filter(p => {
+if (!p.certEnd || p.status===“Discharged”) return false;
+const rd = addDays(p.certEnd,-7);
+const d = daysBetween(todayStr, rd);
+return d >= 0 && d <= 14;
+});
+
+// Open follow-ups
+const openFollowUps = followUps.filter(f=>!f.resolved);
+
+// Patients with no appointments in last 14 days
+const unscheduled = patients.filter(p => {
+const recent = appointments.filter(a => a.patientId===p.id && a.date >= addDays(todayStr,-14));
+return recent.length === 0;
+});
+
+// Today’s summary
+const attended = todayAppts.filter(a=>a.attendance===“Attended”);
+const totalUnits = attended.reduce((s,a)=>(a.cptCodes||[]).reduce((su,c)=>su+c.units,s),0);
+const coPayCollected = attended.filter(a=>a.coPayCollected).length;
+
+const getPatient = id => patients.find(p=>p.id===id);
+const getAuth = id => auths.find(a=>a.id===id);
+
+const StatCard = ({label, val, color=T.blue, sub}) => (
+<div style={styles.statCard}>
+<span style={{fontSize:32, fontWeight:700, color}}>{val}</span>
+<span style={{fontSize:12, fontWeight:600, color:T.text}}>{label}</span>
+{sub && <span style={{fontSize:11, color:T.textMuted}}>{sub}</span>}
+</div>
+);
+
+return (
+<div>
+<div style={{fontSize:18, fontWeight:700, marginBottom:4}}>Dashboard</div>
+<div style={{fontSize:12, color:T.textMuted, marginBottom:20}}>{new Date().toLocaleDateString(“en-US”,{weekday:“long”,year:“numeric”,month:“long”,day:“numeric”})}</div>
+
+```
+  {/* Stat Cards */}
+  <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:12, marginBottom:24}}>
+    <StatCard label="Patients" val={patients.length} color={T.blue}/>
+    <StatCard label="Active Auths" val={auths.length} color={T.green}/>
+    <StatCard label="Today's Appointments" val={todayAppts.length} color={T.blue} sub={`${attended.length} attended`}/>
+    <StatCard label="Units Billed Today" val={totalUnits} color={T.blue}/>
+    <StatCard label="Open Follow-Ups" val={openFollowUps.length} color={openFollowUps.length>0?T.orange:T.green}/>
+    <StatCard label="Low Visit Auths" val={lowVisits.length} color={lowVisits.length>0?T.red:T.green}/>
+    <StatCard label="Expiring Auths (7d)" val={expiringAuths.length} color={expiringAuths.length>0?T.yellow:T.green}/>
+  </div>
+
+  <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:16}}>
+    {/* Alerts */}
+    <div>
+      <SectionTitle>🚨 Alerts</SectionTitle>
+      {expiringAuths.map(a => {
+        const pt = getPatient(a.patientId);
+        return <Alert key={a.id} color={T.yellow}>⏰ Auth {a.authNum} ({pt?.initials}) expires {fmt(a.endDate)}</Alert>;
+      })}
+      {lowVisits.map(a => {
+        const pt = getPatient(a.patientId);
+        const rem = (Number(a.visitsApproved)||0)-(Number(a.visitsUsed)||0);
+        return <Alert key={a.id} color={T.red}>⚠ {pt?.initials} — {rem} visit(s) remaining on auth {a.authNum}</Alert>;
+      })}
+      {recertDue.map(p => {
+        const pt = getPatient(p.patientId);
+        const rd = addDays(p.certEnd,-7);
+        return <Alert key={p.id} color={T.orange}>📋 Re-cert due {fmt(rd)} for {pt?.initials}</Alert>;
+      })}
+      {openFollowUps.slice(0,3).map(f => {
+        const pt = getPatient(f.patientId);
+        return <Alert key={f.id} color={T.orange}>📞 Follow-up needed: {pt?.initials} ({f.reason})</Alert>;
+      })}
+      {expiringAuths.length===0 && lowVisits.length===0 && recertDue.length===0 && openFollowUps.length===0 && (
+        <div style={{color:T.green, fontSize:13, padding:"12px 0"}}>✅ No alerts! You're all caught up.</div>
+      )}
+    </div>
+
+    {/* End of Day Summary */}
+    <div>
+      <SectionTitle>📊 End-of-Day Summary (Today)</SectionTitle>
+      <div style={styles.card}>
+        <div style={{display:"flex", justifyContent:"space-between", fontSize:13, padding:"6px 0", borderBottom:`1px solid ${T.border}`}}>
+          <span style={{color:T.textMuted}}>Scheduled</span><b>{todayAppts.length}</b>
+        </div>
+        <div style={{display:"flex", justifyContent:"space-between", fontSize:13, padding:"6px 0", borderBottom:`1px solid ${T.border}`}}>
+          <span style={{color:T.textMuted}}>Attended</span><b style={{color:T.green}}>{attended.length}</b>
+        </div>
+        <div style={{display:"flex", justifyContent:"space-between", fontSize:13, padding:"6px 0", borderBottom:`1px solid ${T.border}`}}>
+          <span style={{color:T.textMuted}}>No-Shows</span><b style={{color:T.red}}>{todayAppts.filter(a=>a.attendance==="No-Show").length}</b>
+        </div>
+        <div style={{display:"flex", justifyContent:"space-between", fontSize:13, padding:"6px 0", borderBottom:`1px solid ${T.border}`}}>
+          <span style={{color:T.textMuted}}>Cancellations</span><b style={{color:T.orange}}>{todayAppts.filter(a=>a.attendance==="Cancelled").length}</b>
+        </div>
+        <div style={{display:"flex", justifyContent:"space-between", fontSize:13, padding:"6px 0", borderBottom:`1px solid ${T.border}`}}>
+          <span style={{color:T.textMuted}}>Total Units Billed</span><b style={{color:T.blue}}>{totalUnits}</b>
+        </div>
+        <div style={{display:"flex", justifyContent:"space-between", fontSize:13, padding:"6px 0"}}>
+          <span style={{color:T.textMuted}}>Co-pays Collected</span><b style={{color:T.green}}>{coPayCollected} / {attended.length}</b>
+        </div>
+      </div>
+
+      {/* Unscheduled Patients */}
+      {unscheduled.length > 0 && (
+        <>
+          <SectionTitle style={{marginTop:12}}>⚠ Unscheduled (No Appt in 14d)</SectionTitle>
+          {unscheduled.slice(0,5).map(p=>(
+            <div key={p.id} style={{fontSize:12, padding:"4px 0", color:T.textMuted}}>
+              • {p.initials} #{p.chartNum} <Badge color={T.yellow}>{p.caseType}</Badge>
+            </div>
+          ))}
+          {unscheduled.length>5 && <div style={{fontSize:11, color:T.textDim}}>+{unscheduled.length-5} more…</div>}
+        </>
+      )}
+    </div>
+  </div>
+</div>
+```
+
+);
+}
+
+// ─── MAIN APP ─────────────────────────────────────────────────────────────────
+const TABS = [
+{id:“dashboard”, label:“Dashboard”, icon:“📊”},
+{id:“patients”, label:“Patients”, icon:“👤”},
+{id:“auths”, label:“Authorizations”, icon:“🔑”},
+{id:“appointments”, label:“Appointments”, icon:“📅”},
+{id:“soap”, label:“SOAP Notes”, icon:“📝”},
+{id:“reminders”, label:“Reminders”, icon:“🔔”},
+{id:“followup”, label:“Follow-Up”, icon:“📞”},
+{id:“poc”, label:“Plan of Care”, icon:“📋”},
+{id:“insur”, label:“Ins. Verification”, icon:“✅”},
+{id:“reports”, label:“Reports”, icon:“📈”},
+{id:“summary”, label:“Monthly Summary”, icon:“🗓”},
+];
+
+function App() {
+const [tab, setTab] = useState(“dashboard”);
+const [patients, setPatients] = useLS(“chpt_patients”, []);
+const [auths, setAuths] = useLS(“chpt_auths”, []);
+const [appointments, setAppointments] = useLS(“chpt_appointments”, []);
+const [reminders, setReminders] = useLS(“chpt_reminders”, []);
+const [followUps, setFollowUps] = useLS(“chpt_followups”, []);
+const [pocs, setPocs] = useLS(“chpt_pocs”, []);
+const [insurVerifs, setInsurVerifs] = useLS(“chpt_insurverifs”, []);
+
+const alertCount = useMemo(()=>{
+const todayStr = today();
+const expiring = auths.filter(a=>a.endDate&&daysBetween(todayStr,a.endDate)>=0&&daysBetween(todayStr,a.endDate)<=7).length;
+const low = auths.filter(a=>(Number(a.visitsApproved)||0)-(Number(a.visitsUsed)||0)<=2).length;
+const open = followUps.filter(f=>!f.resolved).length;
+return expiring+low+open;
+},[auths,followUps]);
+
+return (
+<>
+<style>{globalCSS}</style>
+<div style={{background:T.bg, minHeight:“100vh”, color:T.text, fontFamily:T.font}}>
+<div style={styles.app}>
+{/* Sidebar */}
+<div style={styles.sidebar}>
+<div style={styles.logo}>
+CHPT<br/>
+<span style={{fontSize:10, fontWeight:400, color:T.textMuted, letterSpacing:“0.04em”}}>WORKFLOW / TRACKER</span>
+</div>
+<nav style={styles.nav}>
+{TABS.map(t=>(
+<div key={t.id} style={styles.navItem(tab===t.id)} onClick={()=>setTab(t.id)}>
+<span>{t.icon}</span>
+<span>{t.label}</span>
+{t.id===“dashboard” && alertCount>0 && (
+<span style={{marginLeft:“auto”, background:T.red, color:”#fff”,
+borderRadius:99, fontSize:10, fontWeight:700, padding:“1px 6px”, minWidth:18, textAlign:“center”}}>
+{alertCount}
+</span>
+)}
+</div>
+))}
+</nav>
+<div style={{padding:“12px 16px”, borderTop:`1px solid ${T.border}`, fontSize:10, color:T.textDim, lineHeight:1.4}}>
+v1.0 · Data stored locally<br/>HIPAA: Use initials + chart # only
+</div>
+</div>
+
+```
+    {/* Main Content */}
+    <div style={styles.main}>
+      <div style={styles.header}>
+        <div style={{display:"flex", gap:8, alignItems:"center"}}>
+          <span style={{fontSize:15, fontWeight:700}}>{TABS.find(t=>t.id===tab)?.icon} {TABS.find(t=>t.id===tab)?.label}</span>
+        </div>
+        <div style={{fontSize:12, color:T.textMuted}}>
+          {patients.length} patients · {auths.length} auths · {appointments.filter(a=>a.date===today()).length} appts today
+        </div>
+      </div>
+      <div style={styles.content}>
+        {tab==="dashboard" && <DashboardTab patients={patients} auths={auths} appointments={appointments} pocs={pocs} followUps={followUps} reminders={reminders}/>}
+        {tab==="patients" && <PatientsTab patients={patients} setPatients={setPatients}/>}
+        {tab==="auths" && <AuthsTab patients={patients} auths={auths} setAuths={setAuths}/>}
+        {tab==="appointments" && <AppointmentsTab patients={patients} auths={auths} setAuths={setAuths} appointments={appointments} setAppointments={setAppointments}/>}
+        {tab==="soap" && <SOAPTab patients={patients}/>}
+        {tab==="reminders" && <RemindersTab reminders={reminders} setReminders={setReminders}/>}
+        {tab==="followup" && <FollowUpTab patients={patients} appointments={appointments} followUps={followUps} setFollowUps={setFollowUps}/>}
+        {tab==="poc" && <PlanOfCareTab patients={patients} pocs={pocs} setPocs={setPocs}/>}
+        {tab==="insur" && <InsuranceVerifTab patients={patients} insurVerifs={insurVerifs} setInsurVerifs={setInsurVerifs}/>}
+        {tab==="reports" && <ReportsTab patients={patients} auths={auths} appointments={appointments}/>}
+        {tab==="summary" && <SummaryTab patients={patients} appointments={appointments}/>}
+      </div>
+    </div>
+  </div>
+  </div>
+</>
+```
+
+);
+}
+
+// ─── Supabase Sync Layer ──────────────────────────────────────────────────────
+function LoginScreen({onLogin}) {
+const [pw, setPw] = React.useState(””);
+const [err, setErr] = React.useState(””);
+const [loading, setLoading] = React.useState(false);
+
+const login = async () => {
+setLoading(true); setErr(””);
+try {
+const { data } = await db.from(“app_settings”).select(“password”).eq(“id”,“settings”).single();
+if (data && data.password === pw) {
+sessionStorage.setItem(“chpt_auth”,“1”);
+onLogin();
+} else {
+setErr(“Incorrect password. Try again.”);
+}
+} catch(e) {
+setErr(“Connection error. Please check internet.”);
+}
+setLoading(false);
+};
+
+return (
+<div style={{background:”#060c14”,minHeight:“100vh”,display:“flex”,alignItems:“center”,justifyContent:“center”,fontFamily:”‘DM Sans’,sans-serif”}}>
+<div style={{background:”#0d1825”,border:“1px solid #1a2d44”,borderRadius:16,padding:40,width:“min(380px,90vw)”,textAlign:“center”}}>
+<div style={{fontSize:24,fontWeight:800,color:”#2a8fff”,marginBottom:4}}>CHPT</div>
+<div style={{fontSize:12,color:”#7a9ab8”,marginBottom:32,letterSpacing:“0.06em”}}>WORKFLOW / TRACKER</div>
+<div style={{marginBottom:12}}>
+<label style={{fontSize:12,color:”#7a9ab8”,fontWeight:500,display:“block”,marginBottom:4}}>Staff Password</label>
+<input type=“password” value={pw} onChange={e=>setPw(e.target.value)}
+onKeyDown={e=>e.key===“Enter”&&login()}
+placeholder=“Enter password”
+style={{textAlign:“center”,fontSize:16,letterSpacing:“0.1em”,background:”#060c14”,color:”#e2eaf4”,border:“1px solid #1a2d44”,borderRadius:6,padding:“10px”,width:“100%”,outline:“none”}}/>
+</div>
+{err && <div style={{color:”#ef4444”,fontSize:12,marginBottom:12}}>{err}</div>}
+<button onClick={login} disabled={loading}
+style={{background:”#2a8fff”,color:”#fff”,border:“none”,borderRadius:8,padding:“12px”,fontSize:15,fontWeight:600,width:“100%”,cursor:“pointer”}}>
+{loading ? “Checking…” : “Sign In”}
+</button>
+<div style={{marginTop:20,fontSize:11,color:”#4a6a88”}}>CHPT Physical Therapy · Staff Only</div>
+</div>
+</div>
+);
+}
+
+// Supabase sync hooks — replace useLS with these
+function useSBTable(table, mapFn, deps=[]) {
+const [data, setData] = React.useState([]);
+const [loaded, setLoaded] = React.useState(false);
+
+const load = React.useCallback(async () => {
+const { data: rows } = await db.from(table).select(”*”).order(“created_at”, {ascending:true});
+setData((rows||[]).map(mapFn));
+setLoaded(true);
+}, [table]);
+
+React.useEffect(() => { load(); }, [load, …deps]);
+
+return [data, setData, load, loaded];
+}
+
+// Root wrapper with auth + Supabase sync
+function RootApp() {
+const [loggedIn, setLoggedIn] = React.useState(() => sessionStorage.getItem(“chpt_auth”)===“1”);
+
+if (!loggedIn) return <LoginScreen onLogin={()=>setLoggedIn(true)}/>;
+return <SyncedApp onLogout={()=>{sessionStorage.removeItem(“chpt_auth”);setLoggedIn(false);}}/>;
+}
+
+function SyncedApp({onLogout}) {
+const [syncReady, setSyncReady] = React.useState(false);
+
+// Override localStorage with Supabase on mount
+React.useEffect(() => {
+// Load all data from Supabase and seed localStorage
+const sync = async () => {
+try {
+const tables = [
+{name:“patients”, key:“chpt_patients”, map: r=>({id:r.id,initials:r.initials,chartNum:r.chart_num,caseType:r.case_type,coPay:r.co_pay,referringProvider:r.referring_provider,icd10:r.icd10,customDx:r.custom_dx,goals:r.goals||[],notes:r.notes||””})},
+{name:“auths”, key:“chpt_auths”, map: r=>({id:r.id,patientId:r.patient_id,authNum:r.auth_num,insurance:r.insurance,startDate:r.start_date,endDate:r.end_date,visitsApproved:r.visits_approved,visitsUsed:r.visits_used,expiryReminder:r.expiry_reminder})},
+{name:“appointments”, key:“chpt_appointments”, map: r=>({id:r.id,patientId:r.patient_id,authId:r.auth_id,date:r.date,time:r.time,visitType:r.visit_type,attendance:r.attendance,cptCodes:r.cpt_codes||[],coPayCollected:r.co_pay_collected,notes:r.notes||””})},
+{name:“pocs”, key:“chpt_pocs”, map: r=>({id:r.id,patientId:r.patient_id,evalDate:r.eval_date,certEnd:r.cert_end,dischargeGoal:r.discharge_goal,status:r.status,notes:r.notes||””})},
+{name:“reminders”, key:“chpt_reminders”, map: r=>({id:r.id,category:r.category,text:r.text,dueDate:r.due_date,done:r.done})},
+{name:“follow_ups”, key:“chpt_followups”, map: r=>({id:r.id,patientId:r.patient_id,reason:r.reason,date:r.date,resolved:r.resolved,notes:r.notes||””})},
+{name:“insur_verifs”, key:“chpt_insurverifs”, map: r=>({id:r.id,patientId:r.patient_id,checklist:r.checklist||{},deductible:r.deductible,copay:r.copay,oop:r.oop,oopRemaining:r.oop_remaining,visitsAllowed:r.visits_allowed,notes:r.notes||””,date:r.date})},
+{name:“closed_days”, key:“chpt_closeddays”, map: r=>r.day},
+];
+
+```
+    for (const t of tables) {
+      const { data } = await db.from(t.name).select("*").order("created_at", {ascending:true}).catch(()=>({data:[]}));
+      if (data && data.length > 0) {
+        const mapped = t.name === "closed_days" ? data.map(t.map) : data.map(t.map);
+        localStorage.setItem(t.key, JSON.stringify(mapped));
+      }
+    }
+    setSyncReady(true);
+  } catch(e) {
+    console.error("Sync error:", e);
+    setSyncReady(true); // still load with localStorage
+  }
+};
+sync();
+```
+
+}, []);
+
+if (!syncReady) return (
+<div style={{background:”#060c14”,minHeight:“100vh”,display:“flex”,flexDirection:“column”,alignItems:“center”,justifyContent:“center”,fontFamily:”‘DM Sans’,sans-serif”}}>
+<div style={{width:40,height:40,border:“3px solid #1a2d44”,borderTop:“3px solid #2a8fff”,borderRadius:“50%”,animation:“spin 0.8s linear infinite”,marginBottom:16}}/>
+<div style={{color:”#7a9ab8”,fontSize:14}}>Loading your data…</div>
+</div>
+);
+
+return <AppWithSave onLogout={onLogout}/>;
+}
+
+// Intercept all saves to also write to Supabase
+function AppWithSave({onLogout}) {
+// We patch the useLS hook behavior by watching localStorage changes
+// and syncing to Supabase
+React.useEffect(() => {
+const origSetItem = localStorage.setItem.bind(localStorage);
+localStorage.setItem = function(key, value) {
+origSetItem(key, value);
+syncToSupabase(key, value);
+};
+return () => { localStorage.setItem = origSetItem; };
+}, []);
+
+return (
+<div style={{position:“relative”}}>
+<button onClick={onLogout} style={{position:“fixed”,bottom:12,left:12,zIndex:999,background:”#1a2d44”,color:”#7a9ab8”,border:“none”,borderRadius:6,padding:“5px 10px”,fontSize:11,cursor:“pointer”}}>
+Sign Out
+</button>
+<App/>
+</div>
+);
+}
+
+async function syncToSupabase(key, value) {
+try {
+const data = JSON.parse(value);
+const tableMap = {
+“chpt_patients”: {table:“patients”, toRow: p=>({id:p.id,initials:p.initials,chart_num:p.chartNum,case_type:p.caseType,co_pay:p.coPay,referring_provider:p.referringProvider,icd10:p.icd10,custom_dx:p.customDx,goals:p.goals,notes:p.notes})},
+“chpt_auths”: {table:“auths”, toRow: a=>({id:a.id,patient_id:a.patientId,auth_num:a.authNum,insurance:a.insurance,start_date:a.startDate,end_date:a.endDate,visits_approved:Number(a.visitsApproved)||0,visits_used:Number(a.visitsUsed)||0,expiry_reminder:Number(a.expiryReminder)||7})},
+“chpt_appointments”: {table:“appointments”, toRow: a=>({id:a.id,patient_id:a.patientId,auth_id:a.authId||null,date:a.date,time:a.time,visit_type:a.visitType,attendance:a.attendance,cpt_codes:a.cptCodes||[],co_pay_collected:a.coPayCollected,notes:a.notes||””})},
+“chpt_pocs”: {table:“pocs”, toRow: p=>({id:p.id,patient_id:p.patientId,eval_date:p.evalDate,cert_end:p.certEnd,discharge_goal:p.dischargeGoal,status:p.status,notes:p.notes||””})},
+“chpt_reminders”: {table:“reminders”, toRow: r=>({id:r.id,category:r.category,text:r.text,due_date:r.dueDate,done:r.done})},
+“chpt_followups”: {table:“follow_ups”, toRow: f=>({id:f.id,patient_id:f.patientId,reason:f.reason,date:f.date,resolved:f.resolved,notes:f.notes||””})},
+“chpt_insurverifs”: {table:“insur_verifs”, toRow: v=>({id:v.id,patient_id:v.patientId,checklist:v.checklist||{},deductible:v.deductible,copay:v.copay,oop:v.oop,oop_remaining:v.oopRemaining,visits_allowed:v.visitsAllowed,notes:v.notes||””,date:v.date})},
+};
+
+```
+if (key === "chpt_closeddays") {
+  // closed days — sync whole list
+  const days = Array.isArray(data) ? data : [];
+  // Get existing
+  const { data: existing } = await db.from("closed_days").select("day");
+  const existingDays = (existing||[]).map(r=>r.day);
+  // Insert new ones
+  for (const day of days) {
+    if (!existingDays.includes(day)) {
+      await db.from("closed_days").insert({id:Math.random().toString(36).slice(2,9), day});
+    }
+  }
+  // Delete removed ones
+  for (const day of existingDays) {
+    if (!days.includes(day)) {
+      await db.from("closed_days").delete().eq("day",day);
+    }
+  }
+  return;
+}
+
+const config = tableMap[key];
+if (!config || !Array.isArray(data)) return;
+
+// Upsert all records
+const rows = data.map(config.toRow);
+if (rows.length > 0) {
+  await db.from(config.table).upsert(rows, {onConflict:"id"});
+}
+
+// Delete records not in current list
+if (data.length >= 0) {
+  const ids = data.map(r=>r.id);
+  const { data: existing } = await db.from(config.table).select("id");
+  if (existing) {
+    const toDelete = existing.filter(r=>!ids.includes(r.id)).map(r=>r.id);
+    for (const id of toDelete) {
+      await db.from(config.table).delete().eq("id",id);
+    }
+  }
+}
+```
+
+} catch(e) {
+// Silent fail — data still saved in localStorage
+}
+}
+
+const rootEl = document.getElementById(“root”);
+ReactDOM.createRoot(rootEl).render(<RootApp/>);
+</script>
+
+</body>
+</html>
